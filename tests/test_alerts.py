@@ -67,6 +67,12 @@ class AlertTests(unittest.TestCase):
             validate_rule(rule_payload(template="Header [[body]] body [[body]] again"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="[[body]]Body only"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="Header [[/body]] Footer"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="Header [[/body]] Middle [[body]] Body"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="Header [[body]] Body [[/body]] again [[/body]]"))
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))
@@ -111,6 +117,30 @@ class AlertTests(unittest.TestCase):
             self.sent[0][1],
             "Firewall alert on router\n• 192.0.2.1\n• 192.0.2.2",
         )
+
+    def test_compact_batch_renders_footer_once(self):
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=10,
+            parse_mode="HTML",
+            template=(
+                "<b>Firewall alert</b>\n<blockquote expandable>\n"
+                "[[body]]\n• <code>{src_ip}</code>\n[[/body]]\n"
+                "</blockquote>\n<i>End of batch</i>"
+            ),
+        )))
+        first = self.database.insert(LogInput(message="drop src=192.0.2.1", source="router", severity="error"))
+        second = self.database.insert(LogInput(message="drop src=192.0.2.2", source="router", severity="error"))
+
+        self.dispatcher.process(first)
+        self.dispatcher.process(second)
+        self.dispatcher.flush_all()
+
+        self.assertEqual(len(self.sent), 1)
+        text = self.sent[0][1]
+        self.assertEqual(text.count("<blockquote expandable>"), 1)
+        self.assertEqual(text.count("</blockquote>"), 1)
+        self.assertEqual(text.count("End of batch"), 1)
+        self.assertEqual(text.count("<code>192.0.2."), 2)
 
     def test_zero_batch_window_sends_immediately(self):
         self.repository.create_rule(validate_rule(rule_payload(

@@ -167,18 +167,27 @@ values remain available through `{event_at}` and `{received_at}`.
 Captured and built-in values are escaped when HTML or MarkdownV2 formatting is
 selected; markup written directly in the template remains active.
 
-Use `[[body]]` to make a compact batch with one header and a repeated body:
+Use `[[body]]` and `[[/body]]` to make a compact batch with one header, a
+repeated body, and one footer:
 
 ```text
-🚨 DVR connection attempts on {source}
+🚨 <b>DVR connection attempts on {source}</b>
+<blockquote expandable>
 [[body]]
-• {src_ip}:{src_port}
+• <code>{src_ip}:{src_port}</code>
+[[/body]]
+</blockquote>
+LogServer firewall monitor
 ```
 
-Everything before `[[body]]` is rendered once using the first matching log.
-Everything after it is rendered for each matching log and joined with a single
-newline. Templates without the marker retain the original behavior, where the
-entire template is repeated and entries are separated by a blank line.
+Everything before `[[body]]` and after `[[/body]]` is rendered once using the
+first matching log. The content between the markers is rendered for each match
+and joined with a single newline. This lets an HTML `<blockquote expandable>`
+open in the header and close in the footer. Select the HTML formatting mode for
+Telegram tags. The closing marker is optional for backward compatibility;
+without it, everything after `[[body]]` is the repeated body. Templates without
+either marker retain the original behavior, where the entire template repeats
+and entries are separated by a blank line.
 
 Consecutive matching logs are collected into one Telegram message. The batch
 is sent when a nonmatching log arrives or no further match arrives during the

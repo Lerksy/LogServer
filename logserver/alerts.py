@@ -28,6 +28,7 @@ BUILTIN_TEMPLATE_FIELDS = {
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
 BATCH_BODY_MARKER = "[[body]]"
+BATCH_BODY_END_MARKER = "[[/body]]"
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -273,10 +274,18 @@ def validate_rule(payload: Any) -> dict[str, Any]:
 
 def _validate_template(template: str, pattern: re.Pattern[str] | None) -> None:
     marker_count = template.count(BATCH_BODY_MARKER)
+    end_marker_count = template.count(BATCH_BODY_END_MARKER)
     if marker_count > 1:
         raise AlertValidationError(f"template may contain {BATCH_BODY_MARKER} only once")
+    if end_marker_count > 1:
+        raise AlertValidationError(f"template may contain {BATCH_BODY_END_MARKER} only once")
+    if end_marker_count and not marker_count:
+        raise AlertValidationError(f"{BATCH_BODY_END_MARKER} requires {BATCH_BODY_MARKER}")
+    if marker_count and end_marker_count and template.index(BATCH_BODY_END_MARKER) < template.index(BATCH_BODY_MARKER):
+        raise AlertValidationError(f"{BATCH_BODY_END_MARKER} must come after {BATCH_BODY_MARKER}")
     if marker_count:
-        header, body = template.split(BATCH_BODY_MARKER, 1)
+        header, remainder = template.split(BATCH_BODY_MARKER, 1)
+        body = remainder.split(BATCH_BODY_END_MARKER, 1)[0]
         if not header.strip() or not body.strip():
             raise AlertValidationError(
                 f"template must have a non-empty header and body around {BATCH_BODY_MARKER}"
@@ -335,23 +344,25 @@ class _PendingBatch:
     rule: AlertRule
     header: str
     bodies: list[str]
+    footer: str
     separator: str
     deadline: float
 
     def text(self, extra_body: str | None = None) -> str:
         bodies = self.bodies if extra_body is None else [*self.bodies, extra_body]
         body = self.separator.join(bodies)
-        return f"{self.header}\n{body}" if self.header else body
+        return "\n".join(part for part in (self.header, body, self.footer) if part)
 
 
 @dataclass(frozen=True, slots=True)
 class _RenderedAlert:
     header: str
     body: str
+    footer: str
     separator: str
 
     def text(self) -> str:
-        return f"{self.header}\n{self.body}" if self.header else self.body
+        return "\n".join(part for part in (self.header, self.body, self.footer) if part)
 
 
 class AlertDispatcher:
@@ -449,6 +460,7 @@ class AlertDispatcher:
                 rule,
                 rendered.header,
                 [],
+                rendered.footer,
                 rendered.separator,
                 time.monotonic() + rule.batch_window_seconds,
             )
@@ -477,16 +489,21 @@ class AlertDispatcher:
     @staticmethod
     def _render(template: str, context: dict[str, str]) -> _RenderedAlert:
         if BATCH_BODY_MARKER in template:
-            header_template, body_template = template.split(BATCH_BODY_MARKER, 1)
+            header_template, remainder = template.split(BATCH_BODY_MARKER, 1)
+            if BATCH_BODY_END_MARKER in remainder:
+                body_template, footer_template = remainder.split(BATCH_BODY_END_MARKER, 1)
+            else:
+                body_template, footer_template = remainder, ""
             header = header_template.strip().format_map(context)
             body = body_template.strip().format_map(context)
+            footer = footer_template.strip().format_map(context)
             if not header or not body:
                 raise TelegramError("Rendered batch header and body must not be empty")
-            return _RenderedAlert(header, body, "\n")
+            return _RenderedAlert(header, body, footer, "\n")
         text = template.format_map(context)
         if not text:
             raise TelegramError("Rendered message is empty")
-        return _RenderedAlert("", text, "\n\n")
+        return _RenderedAlert("", text, "", "\n\n")
 
     @staticmethod
     def _cooling_down(rule: AlertRule) -> bool:
