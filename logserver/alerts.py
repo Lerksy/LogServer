@@ -23,12 +23,13 @@ from .search import SearchSyntaxError, compile_search
 
 BUILTIN_TEMPLATE_FIELDS = {
     "id", "time", "received_at", "event_at", "source", "facility", "severity",
-    "topics", "message", "raw", "transport",
+    "topics", "message", "raw", "transport", "count",
 }
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
 BATCH_BODY_MARKER = "[[body]]"
 BATCH_BODY_END_MARKER = "[[/body]]"
+BATCH_COUNT_TOKEN = "\ue000LOGSERVER_BATCH_COUNT\ue001"
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -351,7 +352,8 @@ class _PendingBatch:
     def text(self, extra_body: str | None = None) -> str:
         bodies = self.bodies if extra_body is None else [*self.bodies, extra_body]
         body = self.separator.join(bodies)
-        return "\n".join(part for part in (self.header, body, self.footer) if part)
+        text = "\n".join(part for part in (self.header, body, self.footer) if part)
+        return text.replace(BATCH_COUNT_TOKEN, str(len(bodies)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,7 +364,8 @@ class _RenderedAlert:
     separator: str
 
     def text(self) -> str:
-        return "\n".join(part for part in (self.header, self.body, self.footer) if part)
+        text = "\n".join(part for part in (self.header, self.body, self.footer) if part)
+        return text.replace(BATCH_COUNT_TOKEN, "1")
 
 
 class AlertDispatcher:
@@ -422,6 +425,7 @@ class AlertDispatcher:
                 rendered_context = {
                     key: _escape_template_value(str(value), rule.parse_mode) for key, value in context.items()
                 }
+                rendered_context["count"] = BATCH_COUNT_TOKEN
                 rendered = self._render(rule.template, rendered_context)
                 self._append(rule, rendered)
             except Exception as exc:

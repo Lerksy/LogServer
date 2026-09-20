@@ -57,6 +57,29 @@ updates and Compose teardown. It is not removed by `docker compose down
 --volumes`. Deleting it requires the explicit destructive command `docker
 volume rm logserver_log-data` and permanently removes the containerized database.
 
+#### Updating and deploying source changes
+
+Source files are copied into the Docker image, so editing them does not change
+the running container until it is rebuilt. From the project directory:
+
+```bash
+# 1. Edit the Python, HTML, CSS, or JavaScript files.
+python3 -m unittest discover -v
+
+# 2. Build the changed image and replace the container in the background.
+sudo docker compose up --build -d
+
+# 3. Verify the deployment.
+sudo docker compose ps
+curl -fsS http://127.0.0.1:8080/api/health
+sudo docker compose logs --no-color --tail=100
+```
+
+The container replacement keeps `logserver_log-data` attached, so logs,
+Telegram credentials, and alert rules survive deployments. The live database
+is in that Docker volume; the old workspace file `data/logs.db` is only a
+pre-Docker snapshot and should not be copied over the volume during updates.
+
 ## Configure RouterOS
 
 Replace `192.0.2.10` with the LogServer machine's LAN address. In a RouterOS
@@ -165,8 +188,8 @@ Each alert rule can combine:
 For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
 to the template. Numbered captures are available as `{group1}`, `{group2}`, and
 so on. Built-in fields include `{id}`, `{time}`, `{received_at}`, `{event_at}`,
-`{source}`, `{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`, and
-`{transport}`. `{time}` uses the event timestamp supplied by the router and
+`{source}`, `{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`,
+`{transport}`, and `{count}`. `{time}` uses the event timestamp supplied by the router and
 falls back to LogServer's receipt timestamp when the event timestamp is absent.
 It is formatted for messages as `21 Sep 2026 · 02:12:42`; the exact normalized
 values remain available through `{event_at}` and `{received_at}`.
@@ -183,7 +206,7 @@ repeated body, and one footer:
 • <code>{src_ip}:{src_port}</code>
 [[/body]]
 </blockquote>
-LogServer firewall monitor
+<i>{count} attempts in this batch</i>
 ```
 
 Everything before `[[body]]` and after `[[/body]]` is rendered once using the
@@ -193,7 +216,10 @@ open in the header and close in the footer. Select the HTML formatting mode for
 Telegram tags. The closing marker is optional for backward compatibility;
 without it, everything after `[[body]]` is the repeated body. Templates without
 either marker retain the original behavior, where the entire template repeats
-and entries are separated by a blank line.
+and entries are separated by a blank line. `{count}` is resolved when the batch
+is sent and reports the number of repeated entries in that Telegram message.
+Immediate, non-batched notifications use a count of `1`; automatically split
+messages report the count for their individual chunk.
 
 Consecutive matching logs are collected into one Telegram message. The batch
 is sent when a nonmatching log arrives or no further match arrives during the

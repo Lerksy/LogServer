@@ -123,9 +123,9 @@ class AlertTests(unittest.TestCase):
             batch_window_seconds=10,
             parse_mode="HTML",
             template=(
-                "<b>Firewall alert</b>\n<blockquote expandable>\n"
+                "<b>Firewall alert: {count} entries</b>\n<blockquote expandable>\n"
                 "[[body]]\n• <code>{src_ip}</code>\n[[/body]]\n"
-                "</blockquote>\n<i>End of batch</i>"
+                "</blockquote>\n<i>{count} entries in this batch</i>"
             ),
         )))
         first = self.database.insert(LogInput(message="drop src=192.0.2.1", source="router", severity="error"))
@@ -139,8 +139,24 @@ class AlertTests(unittest.TestCase):
         text = self.sent[0][1]
         self.assertEqual(text.count("<blockquote expandable>"), 1)
         self.assertEqual(text.count("</blockquote>"), 1)
-        self.assertEqual(text.count("End of batch"), 1)
+        self.assertEqual(text.count("entries in this batch"), 1)
         self.assertEqual(text.count("<code>192.0.2."), 2)
+        self.assertEqual(text.count("2 entries"), 2)
+
+    def test_count_is_one_when_batching_is_disabled(self):
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            template="Entries: {count}",
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=192.0.2.1",
+            source="router",
+            severity="error",
+        ))
+
+        self.dispatcher.process(record)
+
+        self.assertEqual(self.sent[0][1], "Entries: 1")
 
     def test_zero_batch_window_sends_immediately(self):
         self.repository.create_rule(validate_rule(rule_payload(

@@ -89,7 +89,7 @@
               <label class="field wide">
                 <span>Message template</span>
                 <textarea id="ruleTemplate" class="code-input template-input" rows="6" maxlength="4096" required spellcheck="false"></textarea>
-                <small>Text before <code>[[body]]</code> is the header; text after <code>[[/body]]</code> is the footer. Only the body repeats. Select HTML for expandable blocks.</small>
+                <small>Text before <code>[[body]]</code> is the header; text after <code>[[/body]]</code> is the footer. Only the body repeats. Use <code>{count}</code> for the entries in this batch.</small>
               </label>
               <div class="placeholder-section wide">
                 <span>Insert field or batching marker</span>
@@ -101,6 +101,7 @@
                   <button type="button" data-placeholder="{raw}">{raw}</button>
                   <button type="button" data-placeholder="{time}">{time}</button>
                   <button type="button" data-placeholder="{event_at}">{event_at}</button>
+                  <button type="button" data-placeholder="{count}">{count}</button>
                   <button type="button" data-placeholder="&#10;[[body]]&#10;">[[body]]</button>
                   <button type="button" data-placeholder="&#10;[[/body]]&#10;">[[/body]]</button>
                   <button type="button" data-placeholder="&lt;blockquote expandable&gt;&#10;[[body]]&#10;&#10;[[/body]]&#10;&lt;/blockquote&gt;">Expandable block</button>
