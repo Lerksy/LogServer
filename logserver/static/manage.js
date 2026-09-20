@@ -30,7 +30,7 @@ const ui = {
 };
 
 const state = { rules: [], selectedId: null, toastTimer: null };
-const DEFAULT_TEMPLATE = "🚨 {severity} on {source}\nTopics: {topics}\n{message}";
+const DEFAULT_TEMPLATE = "🚨 {severity} on {source}\n[[body]]\n• {message}";
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -241,4 +241,3 @@ function toast(message, isError = false) {
 
 newRule();
 loadAll();
-

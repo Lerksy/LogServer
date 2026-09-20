@@ -89,16 +89,19 @@
               <label class="field wide">
                 <span>Message template</span>
                 <textarea id="ruleTemplate" class="code-input template-input" rows="6" maxlength="4096" required spellcheck="false"></textarea>
+                <small>Put <code>[[body]]</code> between a one-time header and the body repeated for every log in a batch.</small>
               </label>
               <div class="placeholder-section wide">
-                <span>Insert field</span>
+                <span>Insert field or batching marker</span>
                 <div class="placeholder-list" id="placeholderList">
                   <button type="button" data-placeholder="{severity}">{severity}</button>
                   <button type="button" data-placeholder="{source}">{source}</button>
                   <button type="button" data-placeholder="{topics}">{topics}</button>
                   <button type="button" data-placeholder="{message}">{message}</button>
                   <button type="button" data-placeholder="{raw}">{raw}</button>
+                  <button type="button" data-placeholder="{time}">{time}</button>
                   <button type="button" data-placeholder="{event_at}">{event_at}</button>
+                  <button type="button" data-placeholder="&#10;[[body]]&#10;">[[body]]</button>
                 </div>
               </div>
             </div>

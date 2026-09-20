@@ -63,6 +63,10 @@ class AlertTests(unittest.TestCase):
             validate_rule(rule_payload(regex_target=[]))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(parse_mode={}))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="Header [[body]] body [[body]] again"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="[[body]]Body only"))
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))
@@ -90,11 +94,46 @@ class AlertTests(unittest.TestCase):
         self.dispatcher.process(unrelated)
         self.assertEqual(len(self.sent), 1)
 
-    def test_zero_batch_window_sends_immediately(self):
-        self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=0)))
-        record = self.database.insert(LogInput(message="drop src=192.0.2.1", source="router", severity="error"))
-        self.dispatcher.process(record)
+    def test_compact_batch_renders_header_once_and_each_body_once(self):
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=10,
+            template="Firewall alert on {source}\n[[body]]\n• {src_ip}",
+        )))
+        first = self.database.insert(LogInput(message="drop src=192.0.2.1", source="router", severity="error"))
+        second = self.database.insert(LogInput(message="drop src=192.0.2.2", source="router", severity="error"))
+
+        self.dispatcher.process(first)
+        self.dispatcher.process(second)
+        self.dispatcher.flush_all()
+
         self.assertEqual(len(self.sent), 1)
+        self.assertEqual(
+            self.sent[0][1],
+            "Firewall alert on router\n• 192.0.2.1\n• 192.0.2.2",
+        )
+
+    def test_zero_batch_window_sends_immediately(self):
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            template="{time}",
+        )))
+        with_event_time = self.database.insert(LogInput(
+            message="drop src=192.0.2.1",
+            source="router",
+            severity="error",
+            event_at="2026-09-21T01:02:03.000Z",
+        ))
+        without_event_time = self.database.insert(LogInput(
+            message="drop src=192.0.2.2",
+            source="router",
+            severity="error",
+        ))
+
+        self.dispatcher.process(with_event_time)
+        self.dispatcher.process(without_event_time)
+
+        self.assertEqual(self.sent[0][1], "2026-09-21T01:02:03.000Z")
+        self.assertEqual(self.sent[1][1], without_event_time.received_at)
 
 
 if __name__ == "__main__":

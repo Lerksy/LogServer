@@ -22,11 +22,12 @@ from .search import SearchSyntaxError, compile_search
 
 
 BUILTIN_TEMPLATE_FIELDS = {
-    "id", "received_at", "event_at", "source", "facility", "severity",
+    "id", "time", "received_at", "event_at", "source", "facility", "severity",
     "topics", "message", "raw", "transport",
 }
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
+BATCH_BODY_MARKER = "[[body]]"
 
 
 class AlertValidationError(ValueError):
@@ -270,6 +271,15 @@ def validate_rule(payload: Any) -> dict[str, Any]:
 
 
 def _validate_template(template: str, pattern: re.Pattern[str] | None) -> None:
+    marker_count = template.count(BATCH_BODY_MARKER)
+    if marker_count > 1:
+        raise AlertValidationError(f"template may contain {BATCH_BODY_MARKER} only once")
+    if marker_count:
+        header, body = template.split(BATCH_BODY_MARKER, 1)
+        if not header.strip() or not body.strip():
+            raise AlertValidationError(
+                f"template must have a non-empty header and body around {BATCH_BODY_MARKER}"
+            )
     allowed = set(BUILTIN_TEMPLATE_FIELDS)
     if pattern:
         allowed.update(pattern.groupindex)
@@ -322,8 +332,25 @@ class TelegramClient:
 @dataclass(slots=True)
 class _PendingBatch:
     rule: AlertRule
-    messages: list[str]
+    header: str
+    bodies: list[str]
+    separator: str
     deadline: float
+
+    def text(self, extra_body: str | None = None) -> str:
+        bodies = self.bodies if extra_body is None else [*self.bodies, extra_body]
+        body = self.separator.join(bodies)
+        return f"{self.header}\n{body}" if self.header else body
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderedAlert:
+    header: str
+    body: str
+    separator: str
+
+    def text(self) -> str:
+        return f"{self.header}\n{self.body}" if self.header else self.body
 
 
 class AlertDispatcher:
@@ -383,10 +410,8 @@ class AlertDispatcher:
                 rendered_context = {
                     key: _escape_template_value(str(value), rule.parse_mode) for key, value in context.items()
                 }
-                text = rule.template.format_map(rendered_context)
-                if not text:
-                    raise TelegramError("Rendered message is empty")
-                self._append(rule, text)
+                rendered = self._render(rule.template, rendered_context)
+                self._append(rule, rendered)
             except Exception as exc:
                 self.repository.record_error(rule.id, str(exc))
 
@@ -407,18 +432,27 @@ class AlertDispatcher:
         for rule_id in tuple(self._pending):
             self._flush(rule_id)
 
-    def _append(self, rule: AlertRule, text: str) -> None:
+    def _append(self, rule: AlertRule, rendered: _RenderedAlert) -> None:
         if rule.batch_window_seconds == 0:
-            self._send(rule, text)
+            self._send(rule, rendered.text())
             return
         batch = self._pending.get(rule.id)
-        if batch and len("\n\n".join((*batch.messages, text))) > 4096:
+        if batch and batch.rule.updated_at != rule.updated_at:
+            self._flush(rule.id)
+            batch = None
+        if batch and len(batch.text(rendered.body)) > 4096:
             self._flush(rule.id)
             batch = None
         if batch is None:
-            batch = _PendingBatch(rule, [], time.monotonic() + rule.batch_window_seconds)
+            batch = _PendingBatch(
+                rule,
+                rendered.header,
+                [],
+                rendered.separator,
+                time.monotonic() + rule.batch_window_seconds,
+            )
             self._pending[rule.id] = batch
-        batch.messages.append(text)
+        batch.bodies.append(rendered.body)
         batch.deadline = time.monotonic() + rule.batch_window_seconds
 
     def _flush_due(self) -> None:
@@ -430,7 +464,7 @@ class AlertDispatcher:
     def _flush(self, rule_id: int) -> None:
         batch = self._pending.pop(rule_id, None)
         if batch:
-            self._send(batch.rule, "\n\n".join(batch.messages))
+            self._send(batch.rule, batch.text())
 
     def _send(self, rule: AlertRule, text: str) -> None:
         try:
@@ -438,6 +472,20 @@ class AlertDispatcher:
             self.repository.record_success(rule.id)
         except Exception as exc:
             self.repository.record_error(rule.id, str(exc))
+
+    @staticmethod
+    def _render(template: str, context: dict[str, str]) -> _RenderedAlert:
+        if BATCH_BODY_MARKER in template:
+            header_template, body_template = template.split(BATCH_BODY_MARKER, 1)
+            header = header_template.strip().format_map(context)
+            body = body_template.strip().format_map(context)
+            if not header or not body:
+                raise TelegramError("Rendered batch header and body must not be empty")
+            return _RenderedAlert(header, body, "\n")
+        text = template.format_map(context)
+        if not text:
+            raise TelegramError("Rendered message is empty")
+        return _RenderedAlert("", text, "\n\n")
 
     @staticmethod
     def _cooling_down(rule: AlertRule) -> bool:
@@ -452,7 +500,8 @@ class AlertDispatcher:
     @staticmethod
     def _context(record: LogRecord, rule: AlertRule) -> dict[str, Any] | None:
         context: dict[str, Any] = {
-            "id": record.id, "received_at": record.received_at, "event_at": record.event_at or "",
+            "id": record.id, "time": record.event_at or record.received_at,
+            "received_at": record.received_at, "event_at": record.event_at or "",
             "source": record.source, "facility": record.facility or "", "severity": record.severity,
             "topics": ",".join(record.topics), "message": record.message, "raw": record.raw or "",
             "transport": record.transport,

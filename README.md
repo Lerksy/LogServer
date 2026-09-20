@@ -158,10 +158,25 @@ Each alert rule can combine:
 
 For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
 to the template. Numbered captures are available as `{group1}`, `{group2}`, and
-so on. Built-in fields include `{id}`, `{received_at}`, `{event_at}`, `{source}`,
-`{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`, and `{transport}`.
+so on. Built-in fields include `{id}`, `{time}`, `{received_at}`, `{event_at}`,
+`{source}`, `{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`, and
+`{transport}`. `{time}` uses the event timestamp supplied by the router and
+falls back to LogServer's receipt timestamp when the event timestamp is absent.
 Captured and built-in values are escaped when HTML or MarkdownV2 formatting is
 selected; markup written directly in the template remains active.
+
+Use `[[body]]` to make a compact batch with one header and a repeated body:
+
+```text
+🚨 DVR connection attempts on {source}
+[[body]]
+• {src_ip}:{src_port}
+```
+
+Everything before `[[body]]` is rendered once using the first matching log.
+Everything after it is rendered for each matching log and joined with a single
+newline. Templates without the marker retain the original behavior, where the
+entire template is repeated and entries are separated by a blank line.
 
 Consecutive matching logs are collected into one Telegram message. The batch
 is sent when a nonmatching log arrives or no further match arrives during the
