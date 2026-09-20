@@ -132,6 +132,50 @@ Available fields: `id`, `time`, `event_at`, `received`, `received_at`, `source`,
 The web console remembers its search query, minimum severity, and logs-per-page
 setting in that browser's local storage.
 
+## Telegram alert management
+
+Open <http://localhost:8080/manage> (or use **Manage alerts** in the live
+console) to configure the Telegram destination and custom alert rules. The
+management page opens separately from the live log view.
+
+Create a bot with BotFather, add it to the intended chat, then save its bot
+token and the target `chat_id`. The token and chat ID are stored in the same
+SQLite database as the logs. The HTTP API never returns the saved token, but it
+is not encrypted at rest, so protect the database file and its backups. Use the
+**Send test** button after saving the settings. Telegram's accepted chat IDs and
+formatting modes are described by the official
+[Bot API `sendMessage` documentation](https://core.telegram.org/bots/api#sendmessage).
+
+Each alert rule can combine:
+
+- The normal LogServer query language, such as
+  `topic:firewall AND severity:warning`.
+- An optional Python regular expression applied to either the normalized
+  message or the raw syslog packet.
+- A message template using log fields and captured values.
+- Plain text, Telegram HTML, or Telegram MarkdownV2 formatting.
+- A batching window and a post-delivery cooldown.
+
+For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
+to the template. Numbered captures are available as `{group1}`, `{group2}`, and
+so on. Built-in fields include `{id}`, `{received_at}`, `{event_at}`, `{source}`,
+`{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`, and `{transport}`.
+Captured and built-in values are escaped when HTML or MarkdownV2 formatting is
+selected; markup written directly in the template remains active.
+
+Consecutive matching logs are collected into one Telegram message. The batch
+is sent when a nonmatching log arrives or no further match arrives during the
+configured batch window. Set the window to `0` for immediate individual
+messages. A batch is split automatically before Telegram's 4,096-character
+message limit. The management page reports delivery errors and counts delivered
+batches rather than individual log rows.
+
+The management API and page intentionally have no built-in login, matching the
+read-only live console's trusted-LAN model. Do not expose port `8080` directly
+to the internet; use an authenticated HTTPS reverse proxy if remote access is
+needed. The management endpoints are under `/api/admin/telegram` and
+`/api/admin/rules`.
+
 ## Tests
 
 The suite uses only the standard library:

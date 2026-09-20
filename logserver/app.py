@@ -5,6 +5,7 @@ import signal
 from dataclasses import replace
 from pathlib import Path
 
+from .alerts import AlertDispatcher, AlertRepository
 from .config import Settings
 from .database import LogDatabase
 from .events import EventBroker
@@ -28,7 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
 def run(settings: Settings, *, enable_syslog: bool = True) -> None:
     database = LogDatabase(settings.database_path)
     database.initialize()
-    service = LogService(database, EventBroker())
+    alert_repository = AlertRepository(settings.database_path)
+    alerts = AlertDispatcher(database, alert_repository)
+    alerts.start()
+    service = LogService(database, EventBroker(), alerts)
     http_server = LogHTTPServer((settings.http_host, settings.http_port), service, settings)
     syslog_server = SyslogUDPServer((settings.syslog_host, settings.syslog_port), service) if enable_syslog else None
 
@@ -49,6 +53,7 @@ def run(settings: Settings, *, enable_syslog: bool = True) -> None:
         print("Stopping LogServer")
     finally:
         http_server.server_close()
+        alerts.stop()
         if syslog_server:
             syslog_server.shutdown()
             syslog_server.server_close()
@@ -69,4 +74,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

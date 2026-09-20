@@ -4,11 +4,19 @@ import hmac
 import json
 import mimetypes
 import queue
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .alerts import (
+    AlertRepository,
+    AlertValidationError,
+    TelegramError,
+    validate_rule,
+    validate_telegram_settings,
+)
 from .config import Settings
 from .models import SEVERITIES_BY_URGENCY
 from .search import SearchSyntaxError
@@ -20,9 +28,15 @@ STATIC_DIR = Path(__file__).with_name("static")
 STATIC_FILES = {
     "/": "index.html",
     "/index.html": "index.html",
+    "/manage": "manage.html",
+    "/manage.html": "manage.html",
     "/app.js": "app.js",
+    "/manage.js": "manage.js",
     "/styles.css": "styles.css",
+    "/manage.css": "manage.css",
 }
+_INVALID_JSON = object()
+_RULE_PATH = re.compile(r"^/api/admin/rules/(\d+)$")
 
 
 class LogHTTPServer(ThreadingHTTPServer):
@@ -33,6 +47,7 @@ class LogHTTPServer(ThreadingHTTPServer):
         super().__init__(address, LogRequestHandler)
         self.log_service = service
         self.settings = settings
+        self.alert_repository = AlertRepository(service.database.path)
 
 
 class LogRequestHandler(BaseHTTPRequestHandler):
@@ -47,6 +62,11 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._list_logs(parse_qs(parsed.query))
         elif parsed.path == "/api/stream":
             self._stream_logs()
+        elif parsed.path == "/api/admin/telegram":
+            self._json(HTTPStatus.OK, self.server.alert_repository.get_telegram_settings().to_public_dict())
+        elif parsed.path == "/api/admin/rules":
+            rules = [rule.to_dict() for rule in self.server.alert_repository.list_rules()]
+            self._json(HTTPStatus.OK, {"items": rules})
         elif parsed.path in STATIC_FILES:
             self._static(STATIC_FILES[parsed.path])
         else:
@@ -54,41 +74,111 @@ class LogRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path != "/api/logs":
+        if parsed.path == "/api/logs":
+            self._ingest_logs()
+        elif parsed.path == "/api/admin/telegram/test":
+            self._test_telegram()
+        elif parsed.path == "/api/admin/rules":
+            payload = self._read_json()
+            if payload is _INVALID_JSON:
+                return
+            try:
+                rule = self.server.alert_repository.create_rule(validate_rule(payload))
+            except AlertValidationError as exc:
+                self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
+                return
+            self._json(HTTPStatus.CREATED, rule.to_dict())
+        else:
+            self._error(HTTPStatus.NOT_FOUND, "not_found", "Resource not found")
+
+    def do_PUT(self) -> None:
+        parsed = urlsplit(self.path)
+        payload = self._read_json()
+        if payload is _INVALID_JSON:
+            return
+        if parsed.path == "/api/admin/telegram":
+            try:
+                values = validate_telegram_settings(payload)
+                settings = self.server.alert_repository.update_telegram_settings(**values)
+            except AlertValidationError as exc:
+                self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
+                return
+            self._json(HTTPStatus.OK, settings.to_public_dict())
+            return
+        match = _RULE_PATH.match(parsed.path)
+        if match:
+            try:
+                rule = self.server.alert_repository.update_rule(int(match.group(1)), validate_rule(payload))
+            except AlertValidationError as exc:
+                self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
+                return
+            if rule is None:
+                self._error(HTTPStatus.NOT_FOUND, "not_found", "Alert rule not found")
+            else:
+                self._json(HTTPStatus.OK, rule.to_dict())
+            return
+        self._error(HTTPStatus.NOT_FOUND, "not_found", "Resource not found")
+
+    def do_DELETE(self) -> None:
+        parsed = urlsplit(self.path)
+        match = _RULE_PATH.match(parsed.path)
+        if not match:
             self._error(HTTPStatus.NOT_FOUND, "not_found", "Resource not found")
             return
+        if not self.server.alert_repository.delete_rule(int(match.group(1))):
+            self._error(HTTPStatus.NOT_FOUND, "not_found", "Alert rule not found")
+            return
+        self._json(HTTPStatus.OK, {"deleted": True})
+
+    def _ingest_logs(self) -> None:
         if not self._authorized():
             self._error(HTTPStatus.UNAUTHORIZED, "unauthorized", "A valid ingest token is required")
             return
-
-        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-        if content_type != "application/json":
-            self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "content_type", "Content-Type must be application/json")
+        payload = self._read_json()
+        if payload is _INVALID_JSON:
             return
         try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self._error(HTTPStatus.BAD_REQUEST, "content_length", "Invalid Content-Length")
-            return
-        if content_length <= 0 or content_length > self.server.settings.max_body_bytes:
-            self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body_size", "Request body is empty or too large")
-            return
-
-        try:
-            payload = json.loads(self.rfile.read(content_length))
             values = payload if isinstance(payload, list) else [payload]
             if not values or len(values) > 1000:
                 raise ValidationError("a batch must contain between 1 and 1000 logs")
             inputs = [log_input_from_json(value, self.client_address[0]) for value in values]
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            self._error(HTTPStatus.BAD_REQUEST, "invalid_json", "Request body is not valid JSON")
-            return
         except ValidationError as exc:
             self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
             return
 
         records = [record.to_dict() for record in self.server.log_service.ingest_many(inputs)]
         self._json(HTTPStatus.CREATED, {"items": records, "count": len(records)})
+
+    def _test_telegram(self) -> None:
+        dispatcher = self.server.log_service.alerts
+        if dispatcher is None:
+            self._error(HTTPStatus.SERVICE_UNAVAILABLE, "alerts_unavailable", "Alert dispatcher is unavailable")
+            return
+        try:
+            dispatcher.send_test()
+        except TelegramError as exc:
+            self._error(HTTPStatus.BAD_GATEWAY, "telegram", str(exc))
+            return
+        self._json(HTTPStatus.OK, {"sent": True})
+
+    def _read_json(self) -> object:
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "content_type", "Content-Type must be application/json")
+            return _INVALID_JSON
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._error(HTTPStatus.BAD_REQUEST, "content_length", "Invalid Content-Length")
+            return _INVALID_JSON
+        if content_length <= 0 or content_length > self.server.settings.max_body_bytes:
+            self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body_size", "Request body is empty or too large")
+            return _INVALID_JSON
+        try:
+            return json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_json", "Request body is not valid JSON")
+            return _INVALID_JSON
 
     def _list_logs(self, params: dict[str, list[str]]) -> None:
         minimum_severity = params.get("minimum_severity", ["debug"])[0].lower()

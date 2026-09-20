@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Alert Management · LogServer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="manage.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div><h1>Alert Management</h1><p>Telegram automation</p></div>
+      </div>
+      <a class="back-link" href="/">← Live logs</a>
+    </header>
+
+    <main class="manage-main">
+      <section class="settings-card">
+        <div class="section-heading">
+          <div><span class="eyebrow">Delivery</span><h2>Telegram bot</h2></div>
+          <span class="config-status" id="telegramStatus">Not configured</span>
+        </div>
+        <form id="telegramForm" class="telegram-form">
+          <label class="field">
+            <span>Bot token</span>
+            <input id="botToken" name="bot_token" type="password" autocomplete="new-password"
+                   placeholder="Enter the token from BotFather">
+            <small id="tokenHint">The token is stored in SQLite and is never returned by the API.</small>
+          </label>
+          <label class="field">
+            <span>Chat ID</span>
+            <input id="chatId" name="chat_id" autocomplete="off" placeholder="-1001234567890 or @channel">
+            <small>A private chat, group, supergroup, or channel username.</small>
+          </label>
+          <div class="form-actions telegram-actions">
+            <button class="primary-button" type="submit">Save settings</button>
+            <button class="secondary-button" id="testTelegram" type="button">Send test</button>
+            <button class="danger-link" id="clearToken" type="button">Clear token</button>
+          </div>
+        </form>
+      </section>
+
+      <div class="rules-layout">
+        <aside class="rules-sidebar">
+          <div class="section-heading compact">
+            <div><span class="eyebrow">Automation</span><h2>Alert rules</h2></div>
+            <button class="icon-button" id="newRule" type="button" title="Create rule">＋</button>
+          </div>
+          <div id="ruleList" class="rule-list"></div>
+          <div id="noRules" class="no-rules" hidden>No rules yet.<br>Create one to start routing logs.</div>
+        </aside>
+
+        <section class="rule-editor">
+          <form id="ruleForm">
+            <input id="ruleId" type="hidden">
+            <div class="editor-header">
+              <div><span class="eyebrow" id="editorMode">New rule</span><h2 id="editorTitle">Create an alert</h2></div>
+              <label class="switch"><input id="ruleEnabled" type="checkbox" checked><span></span><em>Enabled</em></label>
+            </div>
+
+            <div class="field-grid">
+              <label class="field wide"><span>Name</span><input id="ruleName" maxlength="100" required placeholder="WAN firewall drops"></label>
+              <label class="field wide">
+                <span>Log query</span>
+                <input id="ruleQuery" maxlength="2000" placeholder="severity:warning AND topic:firewall">
+                <small>The same boolean query language used by the live console. Empty matches every log.</small>
+              </label>
+              <label class="field wide">
+                <span>Regular expression <i>optional</i></span>
+                <textarea id="ruleRegex" class="code-input" rows="3" maxlength="4000" spellcheck="false" placeholder="src-ip (?P&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)"></textarea>
+                <small>Use named groups like <code>(?P&lt;src_ip&gt;...)</code>, then insert <code>{src_ip}</code> in the message.</small>
+              </label>
+              <fieldset class="choice-field">
+                <legend>Apply regex to</legend>
+                <label><input type="radio" name="regex_target" value="message" checked><span>Message</span></label>
+                <label><input type="radio" name="regex_target" value="raw"><span>Raw packet</span></label>
+              </fieldset>
+              <label class="field"><span>Batch window</span><div class="number-field"><input id="batchWindow" type="number" min="0" max="60" value="2"><b>seconds</b></div><small>Consecutive matches become one message.</small></label>
+              <label class="field"><span>Cooldown</span><div class="number-field"><input id="cooldown" type="number" min="0" max="86400" value="0"><b>seconds</b></div><small>Wait after a successful batch.</small></label>
+              <fieldset class="choice-field">
+                <legend>Telegram formatting</legend>
+                <label><input type="radio" name="parse_mode" value="" checked><span>Plain</span></label>
+                <label><input type="radio" name="parse_mode" value="HTML"><span>HTML</span></label>
+                <label><input type="radio" name="parse_mode" value="MarkdownV2"><span>MarkdownV2</span></label>
+              </fieldset>
+              <label class="field wide">
+                <span>Message template</span>
+                <textarea id="ruleTemplate" class="code-input template-input" rows="6" maxlength="4096" required spellcheck="false"></textarea>
+              </label>
+              <div class="placeholder-section wide">
+                <span>Insert field</span>
+                <div class="placeholder-list" id="placeholderList">
+                  <button type="button" data-placeholder="{severity}">{severity}</button>
+                  <button type="button" data-placeholder="{source}">{source}</button>
+                  <button type="button" data-placeholder="{topics}">{topics}</button>
+                  <button type="button" data-placeholder="{message}">{message}</button>
+                  <button type="button" data-placeholder="{raw}">{raw}</button>
+                  <button type="button" data-placeholder="{event_at}">{event_at}</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="ruleRuntime" class="runtime-status" hidden></div>
+            <div class="form-actions editor-actions">
+              <button class="primary-button" type="submit">Save rule</button>
+              <button class="secondary-button" id="resetRule" type="button">Reset</button>
+              <button class="danger-button" id="deleteRule" type="button" hidden>Delete rule</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </main>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script src="manage.js" defer></script>
+  </body>
+</html>

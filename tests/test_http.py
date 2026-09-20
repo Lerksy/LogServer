@@ -50,6 +50,8 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(body, {"status": "ok", "logs": 0})
         response = urllib.request.urlopen(self.base_url + "/", timeout=2)
         self.assertIn(b"Router LogServer", response.read())
+        response = urllib.request.urlopen(self.base_url + "/manage", timeout=2)
+        self.assertIn(b"Alert Management", response.read())
 
     def test_ingest_requires_token(self):
         status, body = self.request("/api/logs", method="POST", payload={"message": "denied"})
@@ -81,6 +83,44 @@ class HTTPIntegrationTests(unittest.TestCase):
         status, body = self.request("/api/logs?q=%28unclosed")
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "search_syntax")
+
+    def test_alert_settings_and_rule_crud(self):
+        status, settings = self.request(
+            "/api/admin/telegram",
+            method="PUT",
+            payload={"bot_token": "123:secret", "chat_id": "-1001"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(settings["bot_token_configured"])
+        self.assertNotIn("bot_token", settings)
+
+        rule = {
+            "name": "Errors",
+            "enabled": True,
+            "query": "severity:error",
+            "regex": r"src=(?P<src_ip>\S+)",
+            "regex_target": "message",
+            "template": "Source {src_ip}: {message}",
+            "parse_mode": "",
+            "cooldown_seconds": 0,
+            "batch_window_seconds": 2,
+        }
+        status, created = self.request("/api/admin/rules", method="POST", payload=rule)
+        self.assertEqual(status, 201)
+        self.assertEqual(created["name"], "Errors")
+
+        status, listing = self.request("/api/admin/rules")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(listing["items"]), 1)
+
+        rule["name"] = "Critical errors"
+        status, updated = self.request(f"/api/admin/rules/{created['id']}", method="PUT", payload=rule)
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["name"], "Critical errors")
+
+        status, deleted = self.request(f"/api/admin/rules/{created['id']}", method="DELETE")
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
 
 
 if __name__ == "__main__":

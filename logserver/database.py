@@ -36,8 +36,40 @@ class LogDatabase:
                 CREATE INDEX IF NOT EXISTS idx_logs_event_at ON logs(event_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_logs_source ON logs(source);
                 CREATE INDEX IF NOT EXISTS idx_logs_severity ON logs(severity);
+
+                CREATE TABLE IF NOT EXISTS telegram_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    bot_token TEXT NOT NULL DEFAULT '',
+                    chat_id TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO telegram_settings (id, updated_at) VALUES (1, '');
+
+                CREATE TABLE IF NOT EXISTS alert_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    query TEXT NOT NULL DEFAULT '',
+                    regex TEXT NOT NULL DEFAULT '',
+                    regex_target TEXT NOT NULL DEFAULT 'message',
+                    template TEXT NOT NULL,
+                    parse_mode TEXT NOT NULL DEFAULT '',
+                    cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+                    batch_window_seconds INTEGER NOT NULL DEFAULT 2,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_sent_at TEXT,
+                    last_error TEXT,
+                    sent_count INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(alert_rules)")}
+            if "batch_window_seconds" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN batch_window_seconds INTEGER NOT NULL DEFAULT 2"
+                )
 
     def insert(self, item: LogInput) -> LogRecord:
         return self.insert_many([item])[0]
@@ -106,6 +138,15 @@ class LogDatabase:
             row = connection.execute("SELECT COUNT(*) AS count FROM logs").fetchone()
         assert row is not None
         return int(row["count"])
+
+    def matches(self, record_id: int, query: str | None) -> bool:
+        sql_filter = compile_search(query)
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                f"SELECT 1 FROM logs WHERE id = ? AND ({sql_filter.clause}) LIMIT 1",
+                (record_id, *sql_filter.params),
+            ).fetchone()
+        return row is not None
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
