@@ -28,6 +28,7 @@ BUILTIN_TEMPLATE_FIELDS = {
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
 BATCH_BODY_MARKER = "[[body]]"
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 class AlertValidationError(ValueError):
@@ -500,7 +501,7 @@ class AlertDispatcher:
     @staticmethod
     def _context(record: LogRecord, rule: AlertRule) -> dict[str, Any] | None:
         context: dict[str, Any] = {
-            "id": record.id, "time": record.event_at or record.received_at,
+            "id": record.id, "time": _format_alert_time(record.event_at or record.received_at),
             "received_at": record.received_at, "event_at": record.event_at or "",
             "source": record.source, "facility": record.facility or "", "severity": record.severity,
             "topics": ",".join(record.topics), "message": record.message, "raw": record.raw or "",
@@ -522,3 +523,14 @@ def _escape_template_value(value: str, parse_mode: str) -> str:
     if parse_mode == "MarkdownV2":
         return re.sub(r"([_\*\[\]()~`>#+\-=|{}.!\\])", r"\\\1", value)
     return value
+
+
+def _format_alert_time(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return (
+        f"{parsed.day:02d} {MONTH_NAMES[parsed.month - 1]} {parsed.year}"
+        f" · {parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}"
+    )

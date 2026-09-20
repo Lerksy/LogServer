@@ -31,6 +31,7 @@ const state = {
   requestNumber: 0,
   refreshTimer: null,
   expandedLogIds: new Set(),
+  expandedMessageIds: new Set(),
 };
 
 function endpoint(beforeId = null) {
@@ -160,10 +161,12 @@ function render() {
 
 function renderRow(log) {
   const row = elements.template.content.firstElementChild.cloneNode(true);
-  const timestamp = log.event_at || log.received_at;
-  const timeElement = row.querySelector(".log-time");
-  timeElement.textContent = formatTime(timestamp);
-  timeElement.title = timestamp;
+  const timeElement = row.querySelector(".log-time time");
+  const time = formatTime(log.received_at || log.event_at);
+  timeElement.dateTime = log.received_at || log.event_at || "";
+  timeElement.querySelector(".log-clock").textContent = time.clock;
+  timeElement.querySelector(".log-date").textContent = time.date;
+  timeElement.title = timestampTitle(log);
   row.querySelector(".source-value").textContent = log.source;
 
   const severity = row.querySelector(".severity-pill");
@@ -181,7 +184,7 @@ function renderRow(log) {
     topics.append(pill);
   }
   if (!log.topics.length) topics.textContent = "—";
-  row.querySelector(".message-value").textContent = log.message;
+  renderMessage(row, log);
 
   if (log.raw || Object.keys(log.metadata || {}).length) {
     const details = row.querySelector(".details");
@@ -206,12 +209,60 @@ function renderRow(log) {
 }
 
 function formatTime(value) {
-  if (!value) return "—";
+  if (!value) return { clock: "—", date: "Unknown date" };
   const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  const datePart = date.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
-  const timePart = date.toLocaleTimeString(undefined, { hour12: false, fractionalSecondDigits: 3 });
-  return `${datePart}  ${timePart}`;
+  if (Number.isNaN(date.valueOf())) return { clock: value, date: "" };
+  return {
+    clock: date.toLocaleTimeString(undefined, {
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }),
+    date: date.toLocaleDateString(undefined, {
+      day: "2-digit", month: "short", year: "numeric",
+    }),
+  };
+}
+
+function timestampTitle(log) {
+  const received = readableTimestamp(log.received_at);
+  const event = log.event_at ? `\nRouter event: ${readableTimestamp(log.event_at)}` : "";
+  return `Received: ${received}${event}`;
+}
+
+function readableTimestamp(value) {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+}
+
+function renderMessage(row, log) {
+  const tag = row.querySelector(".message-tag");
+  const value = row.querySelector(".message-value");
+  const toggle = row.querySelector(".message-toggle");
+  const prefix = log.message.match(/^\[([^\]\r\n]{1,32})\]\s*/);
+  if (prefix) {
+    tag.hidden = false;
+    tag.textContent = `[${prefix[1]}]`;
+    value.textContent = log.message.slice(prefix[0].length);
+  } else {
+    value.textContent = log.message;
+  }
+
+  const collapsible = log.message.length > 140 || log.message.includes("\n");
+  if (!collapsible) return;
+  toggle.hidden = false;
+  const applyExpandedState = (expanded) => {
+    value.classList.toggle("collapsed", !expanded);
+    row.classList.toggle("message-expanded", expanded);
+    toggle.textContent = expanded ? "Collapse" : "Expand";
+    toggle.setAttribute("aria-expanded", String(expanded));
+  };
+  applyExpandedState(state.expandedMessageIds.has(log.id));
+  toggle.addEventListener("click", () => {
+    const expanded = !state.expandedMessageIds.has(log.id);
+    if (expanded) state.expandedMessageIds.add(log.id);
+    else state.expandedMessageIds.delete(log.id);
+    applyExpandedState(expanded);
+  });
 }
 
 function quote(value) {

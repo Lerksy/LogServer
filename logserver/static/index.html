@@ -111,14 +111,20 @@
 
     <template id="rowTemplate">
       <tr class="log-row">
-        <td class="log-time"></td>
+        <td class="log-time">
+          <time><span class="log-clock"></span><span class="log-date"></span></time>
+        </td>
         <td><span class="source-value"></span></td>
         <td><button class="severity-pill" type="button"></button></td>
         <td class="topics-cell"><div class="topics-list"></div></td>
         <td class="message-cell">
-          <div class="message-value"></div>
+          <div class="message-content">
+            <span class="message-tag" hidden></span>
+            <div class="message-value"></div>
+          </div>
+          <button class="message-toggle" type="button" hidden>Expand</button>
           <details class="details" hidden>
-            <summary>Details</summary>
+            <summary>Packet details</summary>
             <pre></pre>
           </details>
         </td>

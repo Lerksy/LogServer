@@ -132,8 +132,8 @@ class AlertTests(unittest.TestCase):
         self.dispatcher.process(with_event_time)
         self.dispatcher.process(without_event_time)
 
-        self.assertEqual(self.sent[0][1], "2026-09-21T01:02:03.000Z")
-        self.assertEqual(self.sent[1][1], without_event_time.received_at)
+        self.assertEqual(self.sent[0][1], "21 Sep 2026 · 01:02:03")
+        self.assertRegex(self.sent[1][1], r"^\d{2} [A-Z][a-z]{2} \d{4} · \d{2}:\d{2}:\d{2}$")
 
 
 if __name__ == "__main__":

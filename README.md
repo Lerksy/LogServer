@@ -162,6 +162,8 @@ so on. Built-in fields include `{id}`, `{time}`, `{received_at}`, `{event_at}`,
 `{source}`, `{facility}`, `{severity}`, `{topics}`, `{message}`, `{raw}`, and
 `{transport}`. `{time}` uses the event timestamp supplied by the router and
 falls back to LogServer's receipt timestamp when the event timestamp is absent.
+It is formatted for messages as `21 Sep 2026 · 02:12:42`; the exact normalized
+values remain available through `{event_at}` and `{received_at}`.
 Captured and built-in values are escaped when HTML or MarkdownV2 formatting is
 selected; markup written directly in the template remains active.
 
