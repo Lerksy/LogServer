@@ -8,9 +8,16 @@ services:
     volumes:
       - log-data:/data
     environment:
-      # Set this before exposing HTTP ingestion outside a trusted network.
-      LOGSERVER_INGEST_TOKEN: "change-me"
+      # Export this variable before starting Compose when HTTP writes need protection.
+      LOGSERVER_INGEST_TOKEN: "${LOGSERVER_INGEST_TOKEN:-}"
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   log-data:
-
+    name: logserver_log-data
+    external: true

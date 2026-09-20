@@ -43,13 +43,19 @@ Use `--no-syslog` when only the HTTP service is wanted.
 
 ### Docker Compose
 
-Change the example ingest token in `compose.yaml`, then run:
+Optionally export an HTTP ingest token, then start the detached service:
 
 ```bash
+docker volume create logserver_log-data
+export LOGSERVER_INGEST_TOKEN='change-me'
 docker compose up --build -d
 ```
 
-The named `log-data` volume keeps the SQLite database across container updates.
+Leave the variable unset if HTTP ingestion should remain unauthenticated. The
+external `logserver_log-data` volume keeps the SQLite database across container
+updates and Compose teardown. It is not removed by `docker compose down
+--volumes`. Deleting it requires the explicit destructive command `docker
+volume rm logserver_log-data` and permanently removes the containerized database.
 
 ## Configure RouterOS
 
