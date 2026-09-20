@@ -18,6 +18,24 @@ class SyslogParserTests(unittest.TestCase):
         self.assertEqual(item.message, "user admin logged in")
         self.assertEqual(item.event_at, "2026-09-20T12:34:56.000Z")
 
+    def test_routeros_topics_string_with_firewall_prefix(self):
+        item = parse_syslog(
+            b"<134>Sep 21 01:14:12 RouterOS firewall,info [Alex PC RDP] dstnat: packet dropped",
+            "192.168.1.1",
+            now=datetime(2026, 9, 21, 2, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(item.topics, ["firewall", "info"])
+        self.assertEqual(item.message, "[Alex PC RDP] dstnat: packet dropped")
+
+    def test_current_routeros_topic_vocabulary(self):
+        item = parse_syslog(
+            b"<135>Sep 21 01:14:12 RouterOS bridge,stp,debug,packet transmitted BPDU",
+            "192.168.1.1",
+            now=datetime(2026, 9, 21, 2, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(item.topics, ["bridge", "stp", "debug", "packet"])
+        self.assertEqual(item.message, "transmitted BPDU")
+
     def test_rfc5424_message(self):
         item = parse_syslog(
             b"<131>1 2026-09-20T11:22:33Z router.example firewall 91 ID47 - blocked packet",
@@ -38,4 +56,3 @@ class SyslogParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

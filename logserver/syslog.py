@@ -16,6 +16,20 @@ FACILITIES = (
     "uucp", "clock", "authpriv", "ftp", "ntp", "audit", "alert", "clock2",
     "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7",
 )
+MIKROTIK_TOPICS = set(SEVERITIES) | {
+    "account", "acme-client", "amt", "async", "backup", "bfd", "bgp", "bridge",
+    "calc", "caps", "certificate", "client", "clock", "container", "ddns", "dhcp",
+    "discover", "disk", "dns", "dot1x", "dude", "e-mail", "event", "evpn", "fetch",
+    "firewall", "gps", "gsm", "health", "hotspot", "igmp-proxy", "interface", "ipsec",
+    "iscsi", "isdn", "isis", "kvm", "l2tp", "ldp", "lora", "lte", "manager", "mme",
+    "mpls", "mqtt", "mvrp", "natpmp", "netwatch", "ntp", "ospf", "ovpn", "packet",
+    "pim", "poe-in", "poe-out", "ppp", "pppoe", "pptp", "ptp", "queue", "radvd",
+    "radius", "raw", "read", "rip", "route", "rpki", "rproxy", "rsvp", "script",
+    "sertcp", "simulator", "smb", "snmp", "socksify", "ssh", "ssld", "sstp", "state",
+    "store", "stp", "system", "telephony", "tftp", "timer", "tr069", "update", "upnp",
+    "ups", "vpls", "vrrp", "watchdog", "web-proxy", "wiliot", "wireguard", "wireless",
+    "write", "zerotier",
+}
 
 _PRI = re.compile(r"^<(\d{1,3})>(.*)$", re.DOTALL)
 _RFC5424 = re.compile(
@@ -107,16 +121,9 @@ def _rfc3164_timestamp(value: str, *, now: datetime | None = None) -> str | None
 
 def _mikrotik_topics(message: str) -> tuple[list[str], str]:
     head, separator, rest = message.partition(" ")
-    candidates = head.split(",")
-    known = set(SEVERITIES) | {
-        "account", "async", "backup", "bfd", "caps", "certificate", "container",
-        "dhcp", "dns", "event", "firewall", "gsm", "hotspot", "interface", "ipsec",
-        "ism", "l2tp", "lte", "manager", "mpls", "ntp", "ospf", "ovpn", "packet",
-        "ppp", "pppoe", "radius", "route", "script", "snmp", "sstp", "system",
-        "telephony", "ups", "web-proxy", "wireguard", "wireless",
-    }
-    if separator and candidates and all(candidate.lower() in known for candidate in candidates):
-        return [candidate.lower() for candidate in candidates], rest
+    candidates = [candidate.lower() for candidate in head.split(",")]
+    if separator and candidates and all(candidate in MIKROTIK_TOPICS for candidate in candidates):
+        return candidates, rest
     return [], message
 
 

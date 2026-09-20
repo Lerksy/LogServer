@@ -57,7 +57,7 @@ Replace `192.0.2.10` with the LogServer machine's LAN address. In a RouterOS
 terminal, create one remote action and direct the standard severity topics to it:
 
 ```routeros
-/system logging action add name=logserver target=remote remote=192.0.2.10 remote-port=5514 remote-log-format=syslog syslog-time-format=bsd-syslog syslog-facility=local0
+/system logging action add name=logserver target=remote remote=192.0.2.10 remote-port=5514 remote-log-format=syslog syslog-time-format=bsd-syslog syslog-facility=local0 add-topics-string=yes
 /system logging add topics=info action=logserver
 /system logging add topics=warning action=logserver
 /system logging add topics=error action=logserver
@@ -72,7 +72,14 @@ public internet. Debug events can be high volume; omit the final rule if that is
 not desirable. RouterOS syntax can vary slightly by release; use
 `/system logging action print` and `/system logging print` to verify the result.
 The current properties and topic list are documented in the official
-[RouterOS logging manual](https://help.mikrotik.com/docs/spaces/ROS/pages/328094/Log).
+[RouterOS logging manual](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/log/).
+
+`add-topics-string=yes` is important: standard BSD syslog does not otherwise
+carry RouterOS topic names. For an existing action, enable it with:
+
+```routeros
+/system logging action set [find where name=logserver] add-topics-string=yes
+```
 
 ## HTTP ingestion API
 
