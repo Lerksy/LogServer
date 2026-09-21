@@ -6,6 +6,8 @@ from logserver.alerts import (
     AlertDispatcher,
     AlertRepository,
     AlertValidationError,
+    IPEnricher,
+    IPInfo,
     validate_rule,
 )
 from logserver.database import LogDatabase
@@ -19,6 +21,7 @@ def rule_payload(**overrides):
         "query": "severity:error",
         "regex": r"src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)",
         "regex_target": "message",
+        "ip_lookup_field": "",
         "template": "Blocked {src_ip}: {message}",
         "parse_mode": "",
         "cooldown_seconds": 0,
@@ -73,6 +76,58 @@ class AlertTests(unittest.TestCase):
             validate_rule(rule_payload(template="Header [[/body]] Middle [[body]] Body"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="Header [[body]] Body [[/body]] again [[/body]]"))
+
+    def test_ip_enrichment_validation(self):
+        values = validate_rule(rule_payload(
+            ip_lookup_field="src_ip",
+            template="{src_ip}: {ip_country}, {ip_city} — {ip_company}",
+        ))
+        self.assertEqual(values["ip_lookup_field"], "src_ip")
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(ip_lookup_field="missing"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="{ip_country}"))
+
+    def test_ip_enrichment_is_added_to_alert_context(self):
+        looked_up = []
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            enricher=lambda ip: looked_up.append(ip) or IPInfo("United States", "Mountain View", "Google LLC"),
+        )
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            ip_lookup_field="src_ip",
+            template="{src_ip}: {ip_country}, {ip_city} — {ip_company}",
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+
+        self.assertEqual(looked_up, ["8.8.8.8"])
+        self.assertEqual(self.sent[0][1], "8.8.8.8: United States, Mountain View — Google LLC")
+
+    def test_ip_enrichment_cache_avoids_duplicate_requests(self):
+        calls = []
+        enricher = IPEnricher(
+            self.database.path,
+            fetcher=lambda ip: calls.append(ip) or {
+                "country_name": "United States", "city": "Mountain View", "org": "Google LLC",
+            },
+            minimum_interval=0,
+        )
+
+        first = enricher.lookup("8.8.8.8")
+        second = enricher.lookup("8.8.8.8")
+        private = enricher.lookup("192.168.1.1")
+
+        self.assertEqual(first, IPInfo("United States", "Mountain View", "Google LLC"))
+        self.assertEqual(second, first)
+        self.assertEqual(private, IPInfo("Unknown", "Unknown", "Unknown"))
+        self.assertEqual(calls, ["8.8.8.8"])
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))

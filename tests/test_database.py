@@ -1,7 +1,10 @@
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
+from logserver.alerts import AlertRepository
 from logserver.database import LogDatabase
 from logserver.models import LogInput
 
@@ -67,6 +70,50 @@ class DatabaseTests(unittest.TestCase):
             self.database.insert(LogInput(message=severity, source="edge", severity=severity))
         records, _ = self.database.search(minimum_severity="warning")
         self.assertEqual([item.severity for item in records], ["critical", "error", "warning"])
+
+    def test_ip_cache_migration_preserves_existing_alert_rule(self):
+        path = Path(self.tempdir.name) / "legacy.db"
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.executescript(
+                """
+                CREATE TABLE logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL,
+                    event_at TEXT, source TEXT NOT NULL, facility TEXT, severity TEXT NOT NULL,
+                    topics TEXT NOT NULL, message TEXT NOT NULL, raw TEXT,
+                    transport TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE TABLE telegram_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1), bot_token TEXT NOT NULL DEFAULT '',
+                    chat_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+                );
+                INSERT INTO telegram_settings VALUES (1, '', '', '');
+                CREATE TABLE alert_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1, query TEXT NOT NULL DEFAULT '',
+                    regex TEXT NOT NULL DEFAULT '', regex_target TEXT NOT NULL DEFAULT 'message',
+                    template TEXT NOT NULL, parse_mode TEXT NOT NULL DEFAULT '',
+                    cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+                    batch_window_seconds INTEGER NOT NULL DEFAULT 2,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    last_sent_at TEXT, last_error TEXT, sent_count INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO alert_rules (
+                    name, query, regex, regex_target, template, created_at, updated_at
+                ) VALUES ('Existing rule', '', '', 'message', '{message}', 'then', 'then');
+                """
+            )
+
+        LogDatabase(path).initialize()
+
+        rule = AlertRepository(path).get_rule(1)
+        self.assertIsNotNone(rule)
+        self.assertEqual(rule.name, "Existing rule")
+        self.assertEqual(rule.ip_lookup_field, "")
+        with closing(sqlite3.connect(path)) as connection:
+            cache_exists = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_lookup_cache'"
+            ).fetchone()[0]
+        self.assertEqual(cache_exists, 1)
 
 
 if __name__ == "__main__":

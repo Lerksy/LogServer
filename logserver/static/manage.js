@@ -17,6 +17,7 @@ const ui = {
   ruleName: document.querySelector("#ruleName"),
   ruleQuery: document.querySelector("#ruleQuery"),
   ruleRegex: document.querySelector("#ruleRegex"),
+  ipLookupField: document.querySelector("#ipLookupField"),
   batchWindow: document.querySelector("#batchWindow"),
   cooldown: document.querySelector("#cooldown"),
   ruleTemplate: document.querySelector("#ruleTemplate"),
@@ -85,7 +86,7 @@ function ruleCard(rule) {
   stateLabel.textContent = rule.enabled ? "Active" : "Paused";
   head.append(name, rule.last_error ? errorDot(rule.last_error) : stateLabel);
   const meta = document.createElement("small");
-  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch`;
+  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}`;
   button.append(head, meta);
   button.addEventListener("click", () => editRule(rule));
   return button;
@@ -105,6 +106,7 @@ function newRule() {
   ui.ruleEnabled.checked = true;
   ui.batchWindow.value = "2";
   ui.cooldown.value = "0";
+  ui.ipLookupField.value = "";
   ui.ruleTemplate.value = DEFAULT_TEMPLATE;
   ui.editorMode.textContent = "New rule";
   ui.editorTitle.textContent = "Create an alert";
@@ -120,6 +122,7 @@ function editRule(rule) {
   ui.ruleName.value = rule.name;
   ui.ruleQuery.value = rule.query;
   ui.ruleRegex.value = rule.regex;
+  ui.ipLookupField.value = rule.ip_lookup_field || "";
   ui.batchWindow.value = rule.batch_window_seconds;
   ui.cooldown.value = rule.cooldown_seconds;
   ui.ruleTemplate.value = rule.template;
@@ -154,6 +157,7 @@ function rulePayload() {
     query: ui.ruleQuery.value,
     regex: ui.ruleRegex.value,
     regex_target: document.querySelector('input[name="regex_target"]:checked').value,
+    ip_lookup_field: ui.ipLookupField.value,
     template: ui.ruleTemplate.value,
     parse_mode: document.querySelector('input[name="parse_mode"]:checked').value,
     cooldown_seconds: Number(ui.cooldown.value),

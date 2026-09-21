@@ -78,6 +78,11 @@
                 <label><input type="radio" name="regex_target" value="message" checked><span>Message</span></label>
                 <label><input type="radio" name="regex_target" value="raw"><span>Raw packet</span></label>
               </fieldset>
+              <label class="field">
+                <span>IP enrichment <i>optional</i></span>
+                <input id="ipLookupField" maxlength="64" autocomplete="off" placeholder="src_ip">
+                <small>Name of a regex capture containing the IP. Public IPs are looked up through ipapi.co and cached locally.</small>
+              </label>
               <label class="field"><span>Batch window</span><div class="number-field"><input id="batchWindow" type="number" min="0" max="60" value="2"><b>seconds</b></div><small>Consecutive matches become one message.</small></label>
               <label class="field"><span>Cooldown</span><div class="number-field"><input id="cooldown" type="number" min="0" max="86400" value="0"><b>seconds</b></div><small>Wait after a successful batch.</small></label>
               <fieldset class="choice-field">
@@ -102,6 +107,9 @@
                   <button type="button" data-placeholder="{time}">{time}</button>
                   <button type="button" data-placeholder="{event_at}">{event_at}</button>
                   <button type="button" data-placeholder="{count}">{count}</button>
+                  <button type="button" data-placeholder="{ip_country}">{ip_country}</button>
+                  <button type="button" data-placeholder="{ip_city}">{ip_city}</button>
+                  <button type="button" data-placeholder="{ip_company}">{ip_company}</button>
                   <button type="button" data-placeholder="&#10;[[body]]&#10;">[[body]]</button>
                   <button type="button" data-placeholder="&#10;[[/body]]&#10;">[[/body]]</button>
                   <button type="button" data-placeholder="&lt;blockquote expandable&gt;&#10;[[body]]&#10;&#10;[[/body]]&#10;&lt;/blockquote&gt;">Expandable block</button>

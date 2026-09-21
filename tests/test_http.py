@@ -100,7 +100,8 @@ class HTTPIntegrationTests(unittest.TestCase):
             "query": "severity:error",
             "regex": r"src=(?P<src_ip>\S+)",
             "regex_target": "message",
-            "template": "Source {src_ip}: {message}",
+            "ip_lookup_field": "src_ip",
+            "template": "Source {src_ip} ({ip_country}): {message}",
             "parse_mode": "",
             "cooldown_seconds": 0,
             "batch_window_seconds": 2,
@@ -108,6 +109,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         status, created = self.request("/api/admin/rules", method="POST", payload=rule)
         self.assertEqual(status, 201)
         self.assertEqual(created["name"], "Errors")
+        self.assertEqual(created["ip_lookup_field"], "src_ip")
 
         status, listing = self.request("/api/admin/rules")
         self.assertEqual(status, 200)

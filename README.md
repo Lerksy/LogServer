@@ -196,6 +196,31 @@ values remain available through `{event_at}` and `{received_at}`.
 Captured and built-in values are escaped when HTML or MarkdownV2 formatting is
 selected; markup written directly in the template remains active.
 
+### IP enrichment
+
+An alert can enrich one named regex capture with data from
+[ipapi.co](https://ipapi.co/api/). For example, after capturing an address as
+`(?P<src_ip>...)`, enter `src_ip` in the rule's **IP enrichment** field. The
+following fields then become available in the message template:
+
+- `{ip_country}` — country name.
+- `{ip_city}` — city name; omit it from the template when it is not useful.
+- `{ip_company}` — network owner or organization.
+
+Successful responses are cached in SQLite for 30 days. Failed lookups are
+cached for one hour, and requests to ipapi.co are spaced at least one second
+apart. Invalid, private, loopback, link-local, and other non-public addresses
+are never sent to the external service. If a lookup is unavailable, all three
+fields render as `Unknown` and the alert is still delivered. Enabling this
+option sends the captured public IP address to ipapi.co; its geolocation is
+approximate and should not be treated as a precise physical location.
+
+Example body:
+
+```text
+• {src_ip}:{src_port} — {ip_country}, {ip_city} — {ip_company}
+```
+
 Use `[[body]]` and `[[/body]]` to make a compact batch with one header, a
 repeated body, and one footer:
 

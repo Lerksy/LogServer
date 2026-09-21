@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import queue
 import re
@@ -9,6 +10,7 @@ import string
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -25,6 +27,7 @@ BUILTIN_TEMPLATE_FIELDS = {
     "id", "time", "received_at", "event_at", "source", "facility", "severity",
     "topics", "message", "raw", "transport", "count",
 }
+IP_TEMPLATE_FIELDS = {"ip_country", "ip_city", "ip_company"}
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
 BATCH_BODY_MARKER = "[[body]]"
@@ -56,6 +59,148 @@ class TelegramSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class IPInfo:
+    country: str
+    city: str
+    company: str
+
+    def to_context(self) -> dict[str, str]:
+        return {
+            "ip_country": self.country,
+            "ip_city": self.city,
+            "ip_company": self.company,
+        }
+
+
+class IPEnricher:
+    def __init__(
+        self,
+        database_path: Path | str,
+        *,
+        fetcher: Callable[[str], dict[str, Any]] | None = None,
+        cache_days: int = 30,
+        failure_hours: int = 1,
+        minimum_interval: float = 1.0,
+    ):
+        self.path = Path(database_path)
+        self.fetcher = fetcher or self._fetch_ipapi
+        self.cache_ttl = timedelta(days=cache_days)
+        self.failure_ttl = timedelta(hours=failure_hours)
+        self.minimum_interval = minimum_interval
+        self._next_request_at = 0.0
+
+    def lookup(self, value: str) -> IPInfo:
+        try:
+            address = ipaddress.ip_address(value.strip())
+        except ValueError:
+            return self._unknown()
+        ip = address.compressed
+        cached = self._cached(ip)
+        if cached is not None:
+            return cached
+        if not address.is_global:
+            result = self._unknown()
+            self._store(ip, result, self.cache_ttl, "non-public IP address")
+            return result
+
+        wait = self._next_request_at - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._next_request_at = time.monotonic() + self.minimum_interval
+        try:
+            payload = self.fetcher(ip)
+            if payload.get("error"):
+                raise RuntimeError(str(payload.get("reason") or payload.get("message") or "lookup failed"))
+            result = IPInfo(
+                country=self._value(payload.get("country_name")),
+                city=self._value(payload.get("city")),
+                company=self._value(payload.get("org")),
+            )
+            if result == self._unknown():
+                raise RuntimeError("lookup returned no location or organization data")
+            self._store(ip, result, self.cache_ttl, None)
+            return result
+        except Exception as exc:
+            result = self._unknown()
+            self._store(ip, result, self.failure_ttl, str(exc))
+            return result
+
+    def _cached(self, ip: str) -> IPInfo | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute("SELECT * FROM ip_lookup_cache WHERE ip = ?", (ip,)).fetchone()
+        if row is None:
+            return None
+        try:
+            expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if expires_at <= datetime.now(timezone.utc):
+            return None
+        return IPInfo(row["country"], row["city"], row["company"])
+
+    def _store(self, ip: str, result: IPInfo, ttl: timedelta, error: str | None) -> None:
+        now = datetime.now(timezone.utc)
+        fetched_at = self._timestamp(now)
+        expires_at = self._timestamp(now + ttl)
+        with closing(self._connect()) as connection, connection:
+            connection.execute("DELETE FROM ip_lookup_cache WHERE expires_at <= ?", (fetched_at,))
+            connection.execute(
+                """
+                INSERT INTO ip_lookup_cache (
+                    ip, country, city, company, fetched_at, expires_at, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ip) DO UPDATE SET
+                    country = excluded.country,
+                    city = excluded.city,
+                    company = excluded.company,
+                    fetched_at = excluded.fetched_at,
+                    expires_at = excluded.expires_at,
+                    error = excluded.error
+                """,
+                (ip, result.country, result.city, result.company, fetched_at, expires_at, (error or "")[:500] or None),
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 10000")
+        return connection
+
+    @staticmethod
+    def _fetch_ipapi(ip: str) -> dict[str, Any]:
+        encoded_ip = urllib.parse.quote(ip, safe="")
+        request = urllib.request.Request(
+            f"https://ipapi.co/{encoded_ip}/json/",
+            headers={"Accept": "application/json", "User-Agent": "MikroTik-LogServer/0.1"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"ipapi.co returned HTTP {exc.code}") from exc
+        except (OSError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"ipapi.co lookup failed: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("ipapi.co returned an invalid response")
+        return payload
+
+    @staticmethod
+    def _value(value: Any) -> str:
+        if value is None:
+            return "Unknown"
+        text = str(value).strip()
+        return text[:255] if text else "Unknown"
+
+    @staticmethod
+    def _unknown() -> IPInfo:
+        return IPInfo("Unknown", "Unknown", "Unknown")
+
+    @staticmethod
+    def _timestamp(value: datetime) -> str:
+        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+@dataclass(frozen=True, slots=True)
 class AlertRule:
     id: int
     name: str
@@ -63,6 +208,7 @@ class AlertRule:
     query: str
     regex: str
     regex_target: str
+    ip_lookup_field: str
     template: str
     parse_mode: str
     cooldown_seconds: int
@@ -133,13 +279,13 @@ class AlertRepository:
             cursor = connection.execute(
                 """
                 INSERT INTO alert_rules (
-                    name, enabled, query, regex, regex_target, template,
+                    name, enabled, query, regex, regex_target, ip_lookup_field, template,
                     parse_mode, cooldown_seconds, batch_window_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["template"], values["parse_mode"],
+                    values["regex_target"], values["ip_lookup_field"], values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], now, now,
                 ),
             )
@@ -154,12 +300,13 @@ class AlertRepository:
                 """
                 UPDATE alert_rules SET
                     name = ?, enabled = ?, query = ?, regex = ?, regex_target = ?,
-                    template = ?, parse_mode = ?, cooldown_seconds = ?, batch_window_seconds = ?, updated_at = ?
+                    ip_lookup_field = ?, template = ?, parse_mode = ?, cooldown_seconds = ?,
+                    batch_window_seconds = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["template"], values["parse_mode"],
+                    values["regex_target"], values["ip_lookup_field"], values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], utc_now(), rule_id,
                 ),
             )
@@ -198,7 +345,8 @@ class AlertRepository:
     def _rule(row: sqlite3.Row) -> AlertRule:
         return AlertRule(
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]), query=row["query"],
-            regex=row["regex"], regex_target=row["regex_target"], template=row["template"],
+            regex=row["regex"], regex_target=row["regex_target"], ip_lookup_field=row["ip_lookup_field"],
+            template=row["template"],
             parse_mode=row["parse_mode"], cooldown_seconds=row["cooldown_seconds"],
             batch_window_seconds=row["batch_window_seconds"],
             created_at=row["created_at"], updated_at=row["updated_at"],
@@ -228,6 +376,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     query = payload.get("query", "")
     pattern = payload.get("regex", "")
     target = payload.get("regex_target", "message")
+    ip_lookup_field = payload.get("ip_lookup_field", "")
     template = payload.get("template", "")
     parse_mode = payload.get("parse_mode", "")
     enabled = payload.get("enabled", True)
@@ -250,6 +399,16 @@ def validate_rule(payload: Any) -> dict[str, Any]:
         raise AlertValidationError(f"invalid regex: {exc}") from exc
     if not isinstance(target, str) or target not in REGEX_TARGETS:
         raise AlertValidationError("regex_target must be 'message' or 'raw'")
+    if not isinstance(ip_lookup_field, str) or len(ip_lookup_field.strip()) > 64:
+        raise AlertValidationError("ip_lookup_field must be a string of at most 64 characters")
+    ip_lookup_field = ip_lookup_field.strip()
+    if ip_lookup_field:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", ip_lookup_field):
+            raise AlertValidationError("ip_lookup_field must be a safe named regex capture")
+        if compiled is None or ip_lookup_field not in compiled.groupindex:
+            raise AlertValidationError(
+                "ip_lookup_field must name a capture from the rule's regular expression"
+            )
     if not isinstance(template, str) or not template.strip() or len(template) > 4096:
         raise AlertValidationError("template must be between 1 and 4096 characters")
     if not isinstance(parse_mode, str) or parse_mode not in PARSE_MODES:
@@ -265,15 +424,20 @@ def validate_rule(payload: Any) -> dict[str, Any]:
         or batch_window > 60
     ):
         raise AlertValidationError("batch_window_seconds must be an integer between 0 and 60")
-    _validate_template(template, compiled)
+    _validate_template(template, compiled, bool(ip_lookup_field))
     return {
         "name": name.strip(), "enabled": enabled, "query": query.strip(), "regex": pattern,
-        "regex_target": target, "template": template, "parse_mode": parse_mode,
+        "regex_target": target, "ip_lookup_field": ip_lookup_field,
+        "template": template, "parse_mode": parse_mode,
         "cooldown_seconds": cooldown, "batch_window_seconds": batch_window,
     }
 
 
-def _validate_template(template: str, pattern: re.Pattern[str] | None) -> None:
+def _validate_template(
+    template: str,
+    pattern: re.Pattern[str] | None,
+    ip_lookup_enabled: bool = False,
+) -> None:
     marker_count = template.count(BATCH_BODY_MARKER)
     end_marker_count = template.count(BATCH_BODY_END_MARKER)
     if marker_count > 1:
@@ -292,6 +456,8 @@ def _validate_template(template: str, pattern: re.Pattern[str] | None) -> None:
                 f"template must have a non-empty header and body around {BATCH_BODY_MARKER}"
             )
     allowed = set(BUILTIN_TEMPLATE_FIELDS)
+    if ip_lookup_enabled:
+        allowed.update(IP_TEMPLATE_FIELDS)
     if pattern:
         allowed.update(pattern.groupindex)
         allowed.update(f"group{index}" for index in range(1, pattern.groups + 1))
@@ -374,11 +540,13 @@ class AlertDispatcher:
         database: LogDatabase,
         repository: AlertRepository,
         sender: Callable[[TelegramSettings, str, str], None] | None = None,
+        enricher: Callable[[str], IPInfo] | None = None,
     ):
         self.database = database
         self.repository = repository
         client = TelegramClient()
         self.sender = sender or client.send
+        self.enricher = enricher or IPEnricher(repository.path).lookup
         self._queue: queue.Queue[LogRecord | None] = queue.Queue(maxsize=2000)
         self._thread: threading.Thread | None = None
         self._pending: dict[int, _PendingBatch] = {}
@@ -422,6 +590,9 @@ class AlertDispatcher:
                 if context is None:
                     self._flush(rule.id)
                     continue
+                if rule.ip_lookup_field:
+                    ip_value = str(context.get(rule.ip_lookup_field, ""))
+                    context.update(self.enricher(ip_value).to_context())
                 rendered_context = {
                     key: _escape_template_value(str(value), rule.parse_mode) for key, value in context.items()
                 }

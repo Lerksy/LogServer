@@ -52,6 +52,7 @@ class LogDatabase:
                     query TEXT NOT NULL DEFAULT '',
                     regex TEXT NOT NULL DEFAULT '',
                     regex_target TEXT NOT NULL DEFAULT 'message',
+                    ip_lookup_field TEXT NOT NULL DEFAULT '',
                     template TEXT NOT NULL,
                     parse_mode TEXT NOT NULL DEFAULT '',
                     cooldown_seconds INTEGER NOT NULL DEFAULT 0,
@@ -63,12 +64,28 @@ class LogDatabase:
                     sent_count INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
+
+                CREATE TABLE IF NOT EXISTS ip_lookup_cache (
+                    ip TEXT PRIMARY KEY,
+                    country TEXT NOT NULL DEFAULT '',
+                    city TEXT NOT NULL DEFAULT '',
+                    company TEXT NOT NULL DEFAULT '',
+                    fetched_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_ip_lookup_cache_expires_at
+                    ON ip_lookup_cache(expires_at);
                 """
             )
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(alert_rules)")}
             if "batch_window_seconds" not in columns:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN batch_window_seconds INTEGER NOT NULL DEFAULT 2"
+                )
+            if "ip_lookup_field" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN ip_lookup_field TEXT NOT NULL DEFAULT ''"
                 )
 
     def insert(self, item: LogInput) -> LogRecord:
