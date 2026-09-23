@@ -83,6 +83,16 @@
                 <input id="ipLookupField" maxlength="64" autocomplete="off" placeholder="src_ip">
                 <small>Name of a regex capture containing the IP. Public IPs are looked up through ipapi.co and cached locally.</small>
               </label>
+              <label class="field">
+                <span>Country filter <i>optional regex</i></span>
+                <input id="countryFilter" class="code-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="^(United Kingdom|Germany)$">
+                <small>Case-insensitive match against the enriched country name. Filtering happens per batch entry.</small>
+              </label>
+              <fieldset class="choice-field">
+                <legend>Country filter action</legend>
+                <label><input type="radio" name="country_filter_mode" value="include" checked><span>Keep matches</span></label>
+                <label><input type="radio" name="country_filter_mode" value="exclude"><span>Exclude matches</span></label>
+              </fieldset>
               <label class="field"><span>Batch window</span><div class="number-field"><input id="batchWindow" type="number" min="0" max="60" value="2"><b>seconds</b></div><small>Consecutive matches become one message.</small></label>
               <label class="field"><span>Cooldown</span><div class="number-field"><input id="cooldown" type="number" min="0" max="86400" value="0"><b>seconds</b></div><small>Wait after a successful batch.</small></label>
               <fieldset class="choice-field">

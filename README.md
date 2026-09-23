@@ -221,6 +221,21 @@ Example body:
 • {src_ip}:{src_port} — {ip_country}, {ip_city} — {ip_company}
 ```
 
+To filter enriched entries before they are added to a batch, enter a
+case-insensitive regular expression in **Country filter** and select either
+**Keep matches** or **Exclude matches**. Match the full country name when an
+exact filter is intended, for example:
+
+```text
+^(United Kingdom|Germany|France)$
+```
+
+Filtering is applied separately to every log entry after IP enrichment. The
+batch header, body, footer, and `{count}` are then built only from the remaining
+entries. If no entries remain, no Telegram message is sent. `Unknown` is the
+country value used when enrichment fails, so it can be explicitly included or
+excluded by the filter.
+
 Use `[[body]]` and `[[/body]]` to make a compact batch with one header, a
 repeated body, and one footer:
 

@@ -18,6 +18,7 @@ const ui = {
   ruleQuery: document.querySelector("#ruleQuery"),
   ruleRegex: document.querySelector("#ruleRegex"),
   ipLookupField: document.querySelector("#ipLookupField"),
+  countryFilter: document.querySelector("#countryFilter"),
   batchWindow: document.querySelector("#batchWindow"),
   cooldown: document.querySelector("#cooldown"),
   ruleTemplate: document.querySelector("#ruleTemplate"),
@@ -86,7 +87,7 @@ function ruleCard(rule) {
   stateLabel.textContent = rule.enabled ? "Active" : "Paused";
   head.append(name, rule.last_error ? errorDot(rule.last_error) : stateLabel);
   const meta = document.createElement("small");
-  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}`;
+  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}${rule.country_filter ? " · Country filter" : ""}`;
   button.append(head, meta);
   button.addEventListener("click", () => editRule(rule));
   return button;
@@ -107,6 +108,7 @@ function newRule() {
   ui.batchWindow.value = "2";
   ui.cooldown.value = "0";
   ui.ipLookupField.value = "";
+  ui.countryFilter.value = "";
   ui.ruleTemplate.value = DEFAULT_TEMPLATE;
   ui.editorMode.textContent = "New rule";
   ui.editorTitle.textContent = "Create an alert";
@@ -123,10 +125,12 @@ function editRule(rule) {
   ui.ruleQuery.value = rule.query;
   ui.ruleRegex.value = rule.regex;
   ui.ipLookupField.value = rule.ip_lookup_field || "";
+  ui.countryFilter.value = rule.country_filter || "";
   ui.batchWindow.value = rule.batch_window_seconds;
   ui.cooldown.value = rule.cooldown_seconds;
   ui.ruleTemplate.value = rule.template;
   setRadio("regex_target", rule.regex_target);
+  setRadio("country_filter_mode", rule.country_filter_mode || "include");
   setRadio("parse_mode", rule.parse_mode);
   ui.editorMode.textContent = `Rule #${rule.id}`;
   ui.editorTitle.textContent = rule.name;
@@ -158,6 +162,8 @@ function rulePayload() {
     regex: ui.ruleRegex.value,
     regex_target: document.querySelector('input[name="regex_target"]:checked').value,
     ip_lookup_field: ui.ipLookupField.value,
+    country_filter: ui.countryFilter.value,
+    country_filter_mode: document.querySelector('input[name="country_filter_mode"]:checked').value,
     template: ui.ruleTemplate.value,
     parse_mode: document.querySelector('input[name="parse_mode"]:checked').value,
     cooldown_seconds: Number(ui.cooldown.value),

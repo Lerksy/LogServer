@@ -101,6 +101,8 @@ class HTTPIntegrationTests(unittest.TestCase):
             "regex": r"src=(?P<src_ip>\S+)",
             "regex_target": "message",
             "ip_lookup_field": "src_ip",
+            "country_filter": r"^(Germany|France)$",
+            "country_filter_mode": "include",
             "template": "Source {src_ip} ({ip_country}): {message}",
             "parse_mode": "",
             "cooldown_seconds": 0,
@@ -110,6 +112,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(created["name"], "Errors")
         self.assertEqual(created["ip_lookup_field"], "src_ip")
+        self.assertEqual(created["country_filter"], r"^(Germany|France)$")
 
         status, listing = self.request("/api/admin/rules")
         self.assertEqual(status, 200)

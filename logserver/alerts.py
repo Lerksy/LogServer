@@ -30,6 +30,7 @@ BUILTIN_TEMPLATE_FIELDS = {
 IP_TEMPLATE_FIELDS = {"ip_country", "ip_city", "ip_company"}
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
+COUNTRY_FILTER_MODES = {"include", "exclude"}
 BATCH_BODY_MARKER = "[[body]]"
 BATCH_BODY_END_MARKER = "[[/body]]"
 BATCH_COUNT_TOKEN = "\ue000LOGSERVER_BATCH_COUNT\ue001"
@@ -209,6 +210,8 @@ class AlertRule:
     regex: str
     regex_target: str
     ip_lookup_field: str
+    country_filter: str
+    country_filter_mode: str
     template: str
     parse_mode: str
     cooldown_seconds: int
@@ -279,13 +282,15 @@ class AlertRepository:
             cursor = connection.execute(
                 """
                 INSERT INTO alert_rules (
-                    name, enabled, query, regex, regex_target, ip_lookup_field, template,
+                    name, enabled, query, regex, regex_target, ip_lookup_field,
+                    country_filter, country_filter_mode, template,
                     parse_mode, cooldown_seconds, batch_window_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["ip_lookup_field"], values["template"], values["parse_mode"],
+                    values["regex_target"], values["ip_lookup_field"], values["country_filter"],
+                    values["country_filter_mode"], values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], now, now,
                 ),
             )
@@ -300,13 +305,15 @@ class AlertRepository:
                 """
                 UPDATE alert_rules SET
                     name = ?, enabled = ?, query = ?, regex = ?, regex_target = ?,
-                    ip_lookup_field = ?, template = ?, parse_mode = ?, cooldown_seconds = ?,
+                    ip_lookup_field = ?, country_filter = ?, country_filter_mode = ?,
+                    template = ?, parse_mode = ?, cooldown_seconds = ?,
                     batch_window_seconds = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["ip_lookup_field"], values["template"], values["parse_mode"],
+                    values["regex_target"], values["ip_lookup_field"], values["country_filter"],
+                    values["country_filter_mode"], values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], utc_now(), rule_id,
                 ),
             )
@@ -346,6 +353,7 @@ class AlertRepository:
         return AlertRule(
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]), query=row["query"],
             regex=row["regex"], regex_target=row["regex_target"], ip_lookup_field=row["ip_lookup_field"],
+            country_filter=row["country_filter"], country_filter_mode=row["country_filter_mode"],
             template=row["template"],
             parse_mode=row["parse_mode"], cooldown_seconds=row["cooldown_seconds"],
             batch_window_seconds=row["batch_window_seconds"],
@@ -377,6 +385,8 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     pattern = payload.get("regex", "")
     target = payload.get("regex_target", "message")
     ip_lookup_field = payload.get("ip_lookup_field", "")
+    country_filter = payload.get("country_filter", "")
+    country_filter_mode = payload.get("country_filter_mode", "include")
     template = payload.get("template", "")
     parse_mode = payload.get("parse_mode", "")
     enabled = payload.get("enabled", True)
@@ -409,6 +419,18 @@ def validate_rule(payload: Any) -> dict[str, Any]:
             raise AlertValidationError(
                 "ip_lookup_field must name a capture from the rule's regular expression"
             )
+    if not isinstance(country_filter, str) or len(country_filter.strip()) > 500:
+        raise AlertValidationError("country_filter must be a string of at most 500 characters")
+    country_filter = country_filter.strip()
+    if not isinstance(country_filter_mode, str) or country_filter_mode not in COUNTRY_FILTER_MODES:
+        raise AlertValidationError("country_filter_mode must be 'include' or 'exclude'")
+    if country_filter and not ip_lookup_field:
+        raise AlertValidationError("country_filter requires IP enrichment")
+    if country_filter:
+        try:
+            re.compile(country_filter, re.IGNORECASE)
+        except re.error as exc:
+            raise AlertValidationError(f"invalid country filter regex: {exc}") from exc
     if not isinstance(template, str) or not template.strip() or len(template) > 4096:
         raise AlertValidationError("template must be between 1 and 4096 characters")
     if not isinstance(parse_mode, str) or parse_mode not in PARSE_MODES:
@@ -428,6 +450,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     return {
         "name": name.strip(), "enabled": enabled, "query": query.strip(), "regex": pattern,
         "regex_target": target, "ip_lookup_field": ip_lookup_field,
+        "country_filter": country_filter, "country_filter_mode": country_filter_mode,
         "template": template, "parse_mode": parse_mode,
         "cooldown_seconds": cooldown, "batch_window_seconds": batch_window,
     }
@@ -593,6 +616,8 @@ class AlertDispatcher:
                 if rule.ip_lookup_field:
                     ip_value = str(context.get(rule.ip_lookup_field, ""))
                     context.update(self.enricher(ip_value).to_context())
+                if not self._country_allowed(rule, context):
+                    continue
                 rendered_context = {
                     key: _escape_template_value(str(value), rule.parse_mode) for key, value in context.items()
                 }
@@ -660,6 +685,17 @@ class AlertDispatcher:
             self.repository.record_success(rule.id)
         except Exception as exc:
             self.repository.record_error(rule.id, str(exc))
+
+    @staticmethod
+    def _country_allowed(rule: AlertRule, context: dict[str, Any]) -> bool:
+        if not rule.country_filter:
+            return True
+        matches = re.search(
+            rule.country_filter,
+            str(context.get("ip_country", "Unknown")),
+            re.IGNORECASE,
+        ) is not None
+        return matches if rule.country_filter_mode == "include" else not matches
 
     @staticmethod
     def _render(template: str, context: dict[str, str]) -> _RenderedAlert:

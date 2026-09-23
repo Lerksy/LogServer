@@ -22,6 +22,8 @@ def rule_payload(**overrides):
         "regex": r"src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)",
         "regex_target": "message",
         "ip_lookup_field": "",
+        "country_filter": "",
+        "country_filter_mode": "include",
         "template": "Blocked {src_ip}: {message}",
         "parse_mode": "",
         "cooldown_seconds": 0,
@@ -88,6 +90,22 @@ class AlertTests(unittest.TestCase):
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="{ip_country}"))
 
+    def test_country_filter_validation(self):
+        values = validate_rule(rule_payload(
+            ip_lookup_field="src_ip",
+            country_filter=r"^(United Kingdom|Germany)$",
+            country_filter_mode="exclude",
+        ))
+        self.assertEqual(values["country_filter_mode"], "exclude")
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(country_filter="Germany"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(ip_lookup_field="src_ip", country_filter="("))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(
+                ip_lookup_field="src_ip", country_filter="Germany", country_filter_mode="other",
+            ))
+
     def test_ip_enrichment_is_added_to_alert_context(self):
         looked_up = []
         dispatcher = AlertDispatcher(
@@ -128,6 +146,61 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(second, first)
         self.assertEqual(private, IPInfo("Unknown", "Unknown", "Unknown"))
         self.assertEqual(calls, ["8.8.8.8"])
+
+    def test_country_filter_removes_entries_before_batching(self):
+        countries = {
+            "8.8.8.8": "United States",
+            "1.1.1.1": "Australia",
+            "9.9.9.9": "United States",
+        }
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            enricher=lambda ip: IPInfo(countries[ip], "City", "Company"),
+        )
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=10,
+            ip_lookup_field="src_ip",
+            country_filter=r"^United States$",
+            template="Count: {count}\n[[body]]\n{src_ip}: {ip_country}",
+        )))
+        for ip in countries:
+            record = self.database.insert(LogInput(
+                message=f"drop src={ip}", source="router", severity="error",
+            ))
+            dispatcher.process(record)
+
+        dispatcher.flush_all()
+
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Count: 2", self.sent[0][1])
+        self.assertIn("8.8.8.8: United States", self.sent[0][1])
+        self.assertIn("9.9.9.9: United States", self.sent[0][1])
+        self.assertNotIn("1.1.1.1", self.sent[0][1])
+
+    def test_empty_batch_after_country_filter_is_not_sent(self):
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            enricher=lambda ip: IPInfo("Germany", "Berlin", "Company"),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=10,
+            ip_lookup_field="src_ip",
+            country_filter=r"^Germany$",
+            country_filter_mode="exclude",
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+        dispatcher.flush_all()
+
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.repository.get_rule(rule.id).sent_count, 0)
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))

@@ -53,6 +53,8 @@ class LogDatabase:
                     regex TEXT NOT NULL DEFAULT '',
                     regex_target TEXT NOT NULL DEFAULT 'message',
                     ip_lookup_field TEXT NOT NULL DEFAULT '',
+                    country_filter TEXT NOT NULL DEFAULT '',
+                    country_filter_mode TEXT NOT NULL DEFAULT 'include',
                     template TEXT NOT NULL,
                     parse_mode TEXT NOT NULL DEFAULT '',
                     cooldown_seconds INTEGER NOT NULL DEFAULT 0,
@@ -86,6 +88,14 @@ class LogDatabase:
             if "ip_lookup_field" not in columns:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN ip_lookup_field TEXT NOT NULL DEFAULT ''"
+                )
+            if "country_filter" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN country_filter TEXT NOT NULL DEFAULT ''"
+                )
+            if "country_filter_mode" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN country_filter_mode TEXT NOT NULL DEFAULT 'include'"
                 )
 
     def insert(self, item: LogInput) -> LogRecord:
