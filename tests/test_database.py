@@ -111,6 +111,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(rule.ip_lookup_field, "")
         self.assertEqual(rule.country_filter, "")
         self.assertEqual(rule.country_filter_mode, "include")
+        self.assertEqual(rule.additional_chat_ids, ())
         with closing(sqlite3.connect(path)) as connection:
             cache_exists = connection.execute(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_lookup_cache'"

@@ -55,6 +55,7 @@ class LogDatabase:
                     ip_lookup_field TEXT NOT NULL DEFAULT '',
                     country_filter TEXT NOT NULL DEFAULT '',
                     country_filter_mode TEXT NOT NULL DEFAULT 'include',
+                    additional_chat_ids TEXT NOT NULL DEFAULT '[]',
                     template TEXT NOT NULL,
                     parse_mode TEXT NOT NULL DEFAULT '',
                     cooldown_seconds INTEGER NOT NULL DEFAULT 0,
@@ -96,6 +97,10 @@ class LogDatabase:
             if "country_filter_mode" not in columns:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN country_filter_mode TEXT NOT NULL DEFAULT 'include'"
+                )
+            if "additional_chat_ids" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN additional_chat_ids TEXT NOT NULL DEFAULT '[]'"
                 )
 
     def insert(self, item: LogInput) -> LogRecord:

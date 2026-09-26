@@ -93,6 +93,11 @@
                 <label><input type="radio" name="country_filter_mode" value="include" checked><span>Keep matches</span></label>
                 <label><input type="radio" name="country_filter_mode" value="exclude"><span>Exclude matches</span></label>
               </fieldset>
+              <label class="field wide">
+                <span>Additional Telegram chat IDs <i>optional</i></span>
+                <textarea id="additionalChatIds" class="code-input" rows="3" maxlength="5120" spellcheck="false" placeholder="-1001234567890&#10;@operations_alerts"></textarea>
+                <small>One chat ID per line, or separate them with commas. Each batch is also copied to these destinations using the same bot.</small>
+              </label>
               <label class="field"><span>Batch window</span><div class="number-field"><input id="batchWindow" type="number" min="0" max="60" value="2"><b>seconds</b></div><small>Consecutive matches become one message.</small></label>
               <label class="field"><span>Cooldown</span><div class="number-field"><input id="cooldown" type="number" min="0" max="86400" value="0"><b>seconds</b></div><small>Wait after a successful batch.</small></label>
               <fieldset class="choice-field">

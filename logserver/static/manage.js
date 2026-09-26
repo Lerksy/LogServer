@@ -19,6 +19,7 @@ const ui = {
   ruleRegex: document.querySelector("#ruleRegex"),
   ipLookupField: document.querySelector("#ipLookupField"),
   countryFilter: document.querySelector("#countryFilter"),
+  additionalChatIds: document.querySelector("#additionalChatIds"),
   batchWindow: document.querySelector("#batchWindow"),
   cooldown: document.querySelector("#cooldown"),
   ruleTemplate: document.querySelector("#ruleTemplate"),
@@ -87,7 +88,8 @@ function ruleCard(rule) {
   stateLabel.textContent = rule.enabled ? "Active" : "Paused";
   head.append(name, rule.last_error ? errorDot(rule.last_error) : stateLabel);
   const meta = document.createElement("small");
-  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}${rule.country_filter ? " · Country filter" : ""}`;
+  const copies = rule.additional_chat_ids?.length || 0;
+  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}${rule.country_filter ? " · Country filter" : ""}${copies ? ` · ${copies} extra chat${copies === 1 ? "" : "s"}` : ""}`;
   button.append(head, meta);
   button.addEventListener("click", () => editRule(rule));
   return button;
@@ -109,6 +111,7 @@ function newRule() {
   ui.cooldown.value = "0";
   ui.ipLookupField.value = "";
   ui.countryFilter.value = "";
+  ui.additionalChatIds.value = "";
   ui.ruleTemplate.value = DEFAULT_TEMPLATE;
   ui.editorMode.textContent = "New rule";
   ui.editorTitle.textContent = "Create an alert";
@@ -126,6 +129,7 @@ function editRule(rule) {
   ui.ruleRegex.value = rule.regex;
   ui.ipLookupField.value = rule.ip_lookup_field || "";
   ui.countryFilter.value = rule.country_filter || "";
+  ui.additionalChatIds.value = (rule.additional_chat_ids || []).join("\n");
   ui.batchWindow.value = rule.batch_window_seconds;
   ui.cooldown.value = rule.cooldown_seconds;
   ui.ruleTemplate.value = rule.template;
@@ -164,6 +168,8 @@ function rulePayload() {
     ip_lookup_field: ui.ipLookupField.value,
     country_filter: ui.countryFilter.value,
     country_filter_mode: document.querySelector('input[name="country_filter_mode"]:checked').value,
+    additional_chat_ids: ui.additionalChatIds.value
+      .split(/[\n,]+/).map((value) => value.trim()).filter(Boolean),
     template: ui.ruleTemplate.value,
     parse_mode: document.querySelector('input[name="parse_mode"]:checked').value,
     cooldown_seconds: Number(ui.cooldown.value),

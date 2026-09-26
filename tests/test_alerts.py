@@ -24,6 +24,7 @@ def rule_payload(**overrides):
         "ip_lookup_field": "",
         "country_filter": "",
         "country_filter_mode": "include",
+        "additional_chat_ids": [],
         "template": "Blocked {src_ip}: {message}",
         "parse_mode": "",
         "cooldown_seconds": 0,
@@ -60,6 +61,8 @@ class AlertTests(unittest.TestCase):
     def test_validation_accepts_named_capture_and_rejects_unsafe_template(self):
         values = validate_rule(rule_payload())
         self.assertEqual(values["batch_window_seconds"], 2)
+        values = validate_rule(rule_payload(additional_chat_ids=[" -1002 ", "-1002", "@ops"]))
+        self.assertEqual(values["additional_chat_ids"], ["-1002", "@ops"])
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="{message.__class__}"))
         with self.assertRaises(AlertValidationError):
@@ -78,6 +81,10 @@ class AlertTests(unittest.TestCase):
             validate_rule(rule_payload(template="Header [[/body]] Middle [[body]] Body"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="Header [[body]] Body [[/body]] again [[/body]]"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(additional_chat_ids="-1002"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(additional_chat_ids=[""]))
 
     def test_ip_enrichment_validation(self):
         values = validate_rule(rule_payload(
@@ -201,6 +208,50 @@ class AlertTests(unittest.TestCase):
 
         self.assertEqual(self.sent, [])
         self.assertEqual(self.repository.get_rule(rule.id).sent_count, 0)
+
+    def test_batch_is_copied_to_unique_additional_chat_ids(self):
+        rule = self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            additional_chat_ids=["-1001", "-1002", "-1002", "@operations"],
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        self.dispatcher.process(record)
+
+        self.assertEqual(
+            [settings.chat_id for settings, _text, _mode in self.sent],
+            ["-1001", "-1002", "@operations"],
+        )
+        self.assertEqual(len({text for _settings, text, _mode in self.sent}), 1)
+        saved = self.repository.get_rule(rule.id)
+        self.assertEqual(saved.additional_chat_ids, ("-1001", "-1002", "@operations"))
+        self.assertEqual(saved.sent_count, 1)
+
+    def test_delivery_continues_when_one_additional_chat_fails(self):
+        attempted = []
+
+        def sender(settings, text, mode):
+            attempted.append(settings.chat_id)
+            if settings.chat_id == "-1002":
+                raise RuntimeError("chat not found")
+
+        dispatcher = AlertDispatcher(self.database, self.repository, sender=sender)
+        rule = self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            additional_chat_ids=["-1002", "-1003"],
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+
+        self.assertEqual(attempted, ["-1001", "-1002", "-1003"])
+        saved = self.repository.get_rule(rule.id)
+        self.assertEqual(saved.sent_count, 0)
+        self.assertIn("-1002: chat not found", saved.last_error)
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))

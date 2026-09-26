@@ -103,6 +103,7 @@ class HTTPIntegrationTests(unittest.TestCase):
             "ip_lookup_field": "src_ip",
             "country_filter": r"^(Germany|France)$",
             "country_filter_mode": "include",
+            "additional_chat_ids": ["-1002", "@operations"],
             "template": "Source {src_ip} ({ip_country}): {message}",
             "parse_mode": "",
             "cooldown_seconds": 0,
@@ -113,6 +114,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(created["name"], "Errors")
         self.assertEqual(created["ip_lookup_field"], "src_ip")
         self.assertEqual(created["country_filter"], r"^(Germany|France)$")
+        self.assertEqual(created["additional_chat_ids"], ["-1002", "@operations"])
 
         status, listing = self.request("/api/admin/rules")
         self.assertEqual(status, 200)

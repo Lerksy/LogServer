@@ -184,6 +184,15 @@ Each alert rule can combine:
 - A message template using log fields and captured values.
 - Plain text, Telegram HTML, or Telegram MarkdownV2 formatting.
 - A batching window and a post-delivery cooldown.
+- Up to 20 additional Telegram chat IDs that receive a copy of each batch.
+
+The Telegram settings section defines the primary chat. A rule's **Additional
+Telegram chat IDs** field accepts one destination per line, or a comma-separated
+list. Every unique destination receives the same rendered batch through the
+configured bot; duplicate entries and a repeated primary chat ID are sent only
+once. The bot must already have permission to post in every listed chat. A
+failure for one destination does not prevent attempts to the remaining chats,
+and the rule reports which destination failed.
 
 For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
 to the template. Numbered captures are available as `{group1}`, `{group2}`, and

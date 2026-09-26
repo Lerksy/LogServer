@@ -212,6 +212,7 @@ class AlertRule:
     ip_lookup_field: str
     country_filter: str
     country_filter_mode: str
+    additional_chat_ids: tuple[str, ...]
     template: str
     parse_mode: str
     cooldown_seconds: int
@@ -283,14 +284,15 @@ class AlertRepository:
                 """
                 INSERT INTO alert_rules (
                     name, enabled, query, regex, regex_target, ip_lookup_field,
-                    country_filter, country_filter_mode, template,
+                    country_filter, country_filter_mode, additional_chat_ids, template,
                     parse_mode, cooldown_seconds, batch_window_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
                     values["regex_target"], values["ip_lookup_field"], values["country_filter"],
-                    values["country_filter_mode"], values["template"], values["parse_mode"],
+                    values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
+                    values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], now, now,
                 ),
             )
@@ -306,14 +308,15 @@ class AlertRepository:
                 UPDATE alert_rules SET
                     name = ?, enabled = ?, query = ?, regex = ?, regex_target = ?,
                     ip_lookup_field = ?, country_filter = ?, country_filter_mode = ?,
-                    template = ?, parse_mode = ?, cooldown_seconds = ?,
+                    additional_chat_ids = ?, template = ?, parse_mode = ?, cooldown_seconds = ?,
                     batch_window_seconds = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
                     values["regex_target"], values["ip_lookup_field"], values["country_filter"],
-                    values["country_filter_mode"], values["template"], values["parse_mode"],
+                    values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
+                    values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], utc_now(), rule_id,
                 ),
             )
@@ -354,6 +357,7 @@ class AlertRepository:
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]), query=row["query"],
             regex=row["regex"], regex_target=row["regex_target"], ip_lookup_field=row["ip_lookup_field"],
             country_filter=row["country_filter"], country_filter_mode=row["country_filter_mode"],
+            additional_chat_ids=tuple(json.loads(row["additional_chat_ids"])),
             template=row["template"],
             parse_mode=row["parse_mode"], cooldown_seconds=row["cooldown_seconds"],
             batch_window_seconds=row["batch_window_seconds"],
@@ -387,6 +391,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     ip_lookup_field = payload.get("ip_lookup_field", "")
     country_filter = payload.get("country_filter", "")
     country_filter_mode = payload.get("country_filter_mode", "include")
+    additional_chat_ids = payload.get("additional_chat_ids", [])
     template = payload.get("template", "")
     parse_mode = payload.get("parse_mode", "")
     enabled = payload.get("enabled", True)
@@ -431,6 +436,17 @@ def validate_rule(payload: Any) -> dict[str, Any]:
             re.compile(country_filter, re.IGNORECASE)
         except re.error as exc:
             raise AlertValidationError(f"invalid country filter regex: {exc}") from exc
+    if not isinstance(additional_chat_ids, list) or len(additional_chat_ids) > 20:
+        raise AlertValidationError("additional_chat_ids must be a list of at most 20 chat IDs")
+    normalized_chat_ids: list[str] = []
+    for chat_id in additional_chat_ids:
+        if not isinstance(chat_id, str) or not chat_id.strip() or len(chat_id.strip()) > 255:
+            raise AlertValidationError(
+                "each additional chat ID must be a non-empty string of at most 255 characters"
+            )
+        chat_id = chat_id.strip()
+        if chat_id not in normalized_chat_ids:
+            normalized_chat_ids.append(chat_id)
     if not isinstance(template, str) or not template.strip() or len(template) > 4096:
         raise AlertValidationError("template must be between 1 and 4096 characters")
     if not isinstance(parse_mode, str) or parse_mode not in PARSE_MODES:
@@ -451,6 +467,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
         "name": name.strip(), "enabled": enabled, "query": query.strip(), "regex": pattern,
         "regex_target": target, "ip_lookup_field": ip_lookup_field,
         "country_filter": country_filter, "country_filter_mode": country_filter_mode,
+        "additional_chat_ids": normalized_chat_ids,
         "template": template, "parse_mode": parse_mode,
         "cooldown_seconds": cooldown, "batch_window_seconds": batch_window,
     }
@@ -680,11 +697,24 @@ class AlertDispatcher:
             self._send(batch.rule, batch.text())
 
     def _send(self, rule: AlertRule, text: str) -> None:
-        try:
-            self.sender(self.repository.get_telegram_settings(), text, rule.parse_mode)
+        settings = self.repository.get_telegram_settings()
+        destinations = tuple(dict.fromkeys(
+            chat_id for chat_id in (settings.chat_id, *rule.additional_chat_ids) if chat_id
+        ))
+        if not destinations:
+            self.repository.record_error(rule.id, "No Telegram chat ID is configured")
+            return
+        errors: list[str] = []
+        for chat_id in destinations:
+            recipient = TelegramSettings(settings.bot_token, chat_id, settings.updated_at)
+            try:
+                self.sender(recipient, text, rule.parse_mode)
+            except Exception as exc:
+                errors.append(f"{chat_id}: {exc}")
+        if not errors:
             self.repository.record_success(rule.id)
-        except Exception as exc:
-            self.repository.record_error(rule.id, str(exc))
+        else:
+            self.repository.record_error(rule.id, "Delivery failed for " + "; ".join(errors))
 
     @staticmethod
     def _country_allowed(rule: AlertRule, context: dict[str, Any]) -> bool:
