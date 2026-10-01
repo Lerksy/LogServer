@@ -61,6 +61,7 @@ class LogDatabase:
                     regex_target TEXT NOT NULL DEFAULT 'message',
                     ip_lookup_field TEXT NOT NULL DEFAULT '',
                     ip_provider TEXT NOT NULL DEFAULT 'ipapi',
+                    ip_locale TEXT NOT NULL DEFAULT 'en',
                     country_filter TEXT NOT NULL DEFAULT '',
                     country_filter_mode TEXT NOT NULL DEFAULT 'include',
                     additional_chat_ids TEXT NOT NULL DEFAULT '[]',
@@ -119,6 +120,10 @@ class LogDatabase:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN ip_provider TEXT NOT NULL DEFAULT 'ipapi'"
                 )
+            if "ip_locale" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN ip_locale TEXT NOT NULL DEFAULT 'en'"
+                )
             if "country_filter" not in columns:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN country_filter TEXT NOT NULL DEFAULT ''"
@@ -143,6 +148,21 @@ class LogDatabase:
                     'Unavailable', 'Not supported by ipapi.co', '',
                     fetched_at, expires_at, error
                 FROM ip_lookup_cache
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO ip_intel_cache (
+                    provider, ip, country, city, company,
+                    abuse_count, abuse_summary, abuse_last_seen,
+                    fetched_at, expires_at, error
+                )
+                SELECT
+                    '2ip:en', ip, country, city, company,
+                    abuse_count, abuse_summary, abuse_last_seen,
+                    fetched_at, expires_at, error
+                FROM ip_intel_cache
+                WHERE provider = '2ip'
                 """
             )
 

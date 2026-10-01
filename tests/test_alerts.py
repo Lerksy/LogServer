@@ -23,6 +23,7 @@ def rule_payload(**overrides):
         "regex_target": "message",
         "ip_lookup_field": "",
         "ip_provider": "ipapi",
+        "ip_locale": "en",
         "country_filter": "",
         "country_filter_mode": "include",
         "additional_chat_ids": [],
@@ -91,6 +92,7 @@ class AlertTests(unittest.TestCase):
         values = validate_rule(rule_payload(
             ip_lookup_field="src_ip",
             ip_provider="2ip",
+            ip_locale="ua",
             template=(
                 "{src_ip}: {ip_country}, {ip_city} — {ip_company}; "
                 "abuses={ip_abuse_count} {ip_abuse_summary} {ip_abuse_last_seen}"
@@ -98,12 +100,15 @@ class AlertTests(unittest.TestCase):
         ))
         self.assertEqual(values["ip_lookup_field"], "src_ip")
         self.assertEqual(values["ip_provider"], "2ip")
+        self.assertEqual(values["ip_locale"], "ua")
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(ip_lookup_field="missing"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="{ip_country}"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(ip_provider="unknown"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(ip_locale="uk"))
 
     def test_country_filter_validation(self):
         values = validate_rule(rule_payload(
@@ -127,7 +132,7 @@ class AlertTests(unittest.TestCase):
             self.database,
             self.repository,
             sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
-            enricher=lambda ip, provider: looked_up.append((ip, provider))
+            enricher=lambda ip, provider, locale: looked_up.append((ip, provider, locale))
             or IPInfo("United States", "Mountain View", "Google LLC"),
         )
         self.repository.create_rule(validate_rule(rule_payload(
@@ -141,7 +146,7 @@ class AlertTests(unittest.TestCase):
 
         dispatcher.process(record)
 
-        self.assertEqual(looked_up, [("8.8.8.8", "ipapi")])
+        self.assertEqual(looked_up, [("8.8.8.8", "ipapi", "en")])
         self.assertEqual(self.sent[0][1], "8.8.8.8: United States, Mountain View — Google LLC")
 
     def test_ip_enrichment_cache_avoids_duplicate_requests(self):
@@ -169,7 +174,7 @@ class AlertTests(unittest.TestCase):
         enricher = IPEnricher(
             self.database.path,
             twoip_token_getter=lambda: "twoip-secret",
-            twoip_geo_fetcher=lambda ip, token: geo_calls.append((ip, token)) or {
+            twoip_geo_fetcher=lambda ip, token, language: geo_calls.append((ip, token, language)) or {
                 "country": "United States",
                 "city": "New York",
                 "asn": {"name": "GOOGLE"},
@@ -192,14 +197,14 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(first.abuse_summary, "Port Scan; DDoS Attack")
         self.assertEqual(first.abuse_last_seen, "2026-09-21 14:30:00")
         self.assertEqual(second, first)
-        self.assertEqual(geo_calls, [("8.8.8.8", "twoip-secret")])
+        self.assertEqual(geo_calls, [("8.8.8.8", "twoip-secret", "en")])
         self.assertEqual(abuse_calls, [("8.8.8.8", "twoip-secret")])
 
     def test_twoip_without_token_skips_abuse_endpoint(self):
         abuse_calls = []
         enricher = IPEnricher(
             self.database.path,
-            twoip_geo_fetcher=lambda ip, token: {
+            twoip_geo_fetcher=lambda ip, token, language: {
                 "country": "Australia", "city": "Sydney", "asn": {"name": "CLOUDFLARENET"},
             },
             twoip_abuse_fetcher=lambda ip, token: abuse_calls.append((ip, token)) or {},
@@ -220,7 +225,7 @@ class AlertTests(unittest.TestCase):
             fetcher=lambda ip: ipapi_calls.append(ip) or {
                 "country_name": "United States", "city": "Chicago", "org": "Google LLC",
             },
-            twoip_geo_fetcher=lambda ip, token: twoip_calls.append(ip) or {
+            twoip_geo_fetcher=lambda ip, token, language: twoip_calls.append((ip, language)) or {
                 "country": "United States", "city": "New York", "asn": {"name": "GOOGLE"},
             },
             minimum_interval=0,
@@ -234,7 +239,30 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(ipapi.city, "Chicago")
         self.assertEqual(twoip.city, "New York")
         self.assertEqual(ipapi_calls, ["8.8.8.8"])
-        self.assertEqual(twoip_calls, ["8.8.8.8"])
+        self.assertEqual(twoip_calls, [("8.8.8.8", "en")])
+
+    def test_twoip_locale_has_an_independent_cache(self):
+        calls = []
+
+        def geo(ip, token, language):
+            calls.append(language)
+            country = "Ukraine" if language == "en" else "Україна"
+            return {"country": country, "city": "Kyiv", "asn": {"name": "ISP"}}
+
+        enricher = IPEnricher(
+            self.database.path,
+            twoip_geo_fetcher=geo,
+            minimum_interval=0,
+        )
+
+        english = enricher.lookup("8.8.8.8", "2ip", "en")
+        ukrainian = enricher.lookup("8.8.8.8", "2ip", "ua")
+        enricher.lookup("8.8.8.8", "2ip", "en")
+        enricher.lookup("8.8.8.8", "2ip", "ua")
+
+        self.assertEqual(english.country, "Ukraine")
+        self.assertEqual(ukrainian.country, "Україна")
+        self.assertEqual(calls, ["en", "ua"])
 
     def test_country_filter_removes_entries_before_batching(self):
         countries = {
@@ -246,7 +274,7 @@ class AlertTests(unittest.TestCase):
             self.database,
             self.repository,
             sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
-            enricher=lambda ip, provider: IPInfo(countries[ip], "City", "Company"),
+            enricher=lambda ip, provider, locale: IPInfo(countries[ip], "City", "Company"),
         )
         self.repository.create_rule(validate_rule(rule_payload(
             batch_window_seconds=10,
@@ -273,7 +301,7 @@ class AlertTests(unittest.TestCase):
             self.database,
             self.repository,
             sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
-            enricher=lambda ip, provider: IPInfo("Germany", "Berlin", "Company"),
+            enricher=lambda ip, provider, locale: IPInfo("Germany", "Berlin", "Company"),
         )
         rule = self.repository.create_rule(validate_rule(rule_payload(
             batch_window_seconds=10,

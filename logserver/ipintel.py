@@ -20,6 +20,7 @@ IP_TEMPLATE_FIELDS = {
     "ip_abuse_count", "ip_abuse_summary", "ip_abuse_last_seen",
 }
 IP_PROVIDERS = {"ipapi", "2ip"}
+TWOIP_LANGUAGES = {"en", "ua", "de", "ru"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,7 @@ class IPEnricher:
         database_path: Path | str,
         *,
         fetcher: Callable[[str], dict[str, Any]] | None = None,
-        twoip_geo_fetcher: Callable[[str, str], dict[str, Any]] | None = None,
+        twoip_geo_fetcher: Callable[[str, str, str], dict[str, Any]] | None = None,
         twoip_abuse_fetcher: Callable[[str, str], dict[str, Any]] | None = None,
         twoip_token_getter: Callable[[], str] | None = None,
         cache_days: int = 30,
@@ -66,33 +67,36 @@ class IPEnricher:
         self._next_request_at = 0.0
         self._request_lock = threading.Lock()
 
-    def lookup(self, value: str, provider: str = "ipapi") -> IPInfo:
+    def lookup(self, value: str, provider: str = "ipapi", language: str = "en") -> IPInfo:
         if provider not in IP_PROVIDERS:
             raise ValueError(f"Unknown IP provider '{provider}'")
+        if language not in TWOIP_LANGUAGES:
+            raise ValueError(f"Unknown 2ip language '{language}'")
         try:
             address = ipaddress.ip_address(value.strip())
         except ValueError:
             return self._unknown()
         ip = address.compressed
-        cached = self._cached(provider, ip)
+        cache_provider = f"2ip:{language}" if provider == "2ip" else provider
+        cached = self._cached(cache_provider, ip)
         if cached is not None:
             return cached
         if not address.is_global:
             result = self._unknown()
-            self._store(provider, ip, result, self.cache_ttl, "non-public IP address")
+            self._store(cache_provider, ip, result, self.cache_ttl, "non-public IP address")
             return result
 
         try:
             if provider == "2ip":
-                result, error = self._lookup_twoip(ip)
+                result, error = self._lookup_twoip(ip, language)
             else:
                 result, error = self._lookup_ipapi(ip)
             ttl = self.failure_ttl if error else self.cache_ttl
-            self._store(provider, ip, result, ttl, error)
+            self._store(cache_provider, ip, result, ttl, error)
             return result
         except Exception as exc:
             result = self._unknown()
-            self._store(provider, ip, result, self.failure_ttl, str(exc))
+            self._store(cache_provider, ip, result, self.failure_ttl, str(exc))
             return result
 
     def _lookup_ipapi(self, ip: str) -> tuple[IPInfo, str | None]:
@@ -107,9 +111,9 @@ class IPEnricher:
             raise RuntimeError("ipapi.co returned no location or organization data")
         return result, None
 
-    def _lookup_twoip(self, ip: str) -> tuple[IPInfo, str | None]:
+    def _lookup_twoip(self, ip: str, language: str) -> tuple[IPInfo, str | None]:
         token = self.twoip_token_getter().strip()
-        payload = self._paced_request(lambda: self.twoip_geo_fetcher(ip, token))
+        payload = self._paced_request(lambda: self.twoip_geo_fetcher(ip, token, language))
         self._raise_payload_error(payload)
         asn = payload.get("asn") if isinstance(payload.get("asn"), dict) else {}
         base = {
@@ -232,8 +236,11 @@ class IPEnricher:
         return payload
 
     @classmethod
-    def _fetch_twoip_geo(cls, ip: str, token: str) -> dict[str, Any]:
-        query = "?" + urllib.parse.urlencode({"token": token}) if token else ""
+    def _fetch_twoip_geo(cls, ip: str, token: str, language: str) -> dict[str, Any]:
+        parameters = {"lang": language}
+        if token:
+            parameters["token"] = token
+        query = "?" + urllib.parse.urlencode(parameters)
         encoded_ip = urllib.parse.quote(ip, safe="")
         return cls._fetch_json(f"https://api.2ip.io/{encoded_ip}{query}", "2ip.io")
 

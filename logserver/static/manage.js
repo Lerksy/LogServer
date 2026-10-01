@@ -105,7 +105,7 @@ function ruleCard(rule) {
   head.append(name, rule.last_error ? errorDot(rule.last_error) : stateLabel);
   const meta = document.createElement("small");
   const copies = rule.additional_chat_ids?.length || 0;
-  const provider = rule.ip_provider === "2ip" ? "2ip" : "ipapi";
+  const provider = rule.ip_provider === "2ip" ? `2ip/${(rule.ip_locale || "en").toUpperCase()}` : "ipapi";
   meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? ` · ${provider}` : ""}${rule.country_filter ? " · Country filter" : ""}${copies ? ` · ${copies} extra chat${copies === 1 ? "" : "s"}` : ""}`;
   button.append(head, meta);
   button.addEventListener("click", () => editRule(rule));
@@ -152,6 +152,7 @@ function editRule(rule) {
   ui.ruleTemplate.value = rule.template;
   setRadio("regex_target", rule.regex_target);
   setRadio("ip_provider", rule.ip_provider || "ipapi");
+  setRadio("ip_locale", rule.ip_locale || "en");
   setRadio("country_filter_mode", rule.country_filter_mode || "include");
   setRadio("parse_mode", rule.parse_mode);
   ui.editorMode.textContent = `Rule #${rule.id}`;
@@ -185,6 +186,7 @@ function rulePayload() {
     regex_target: document.querySelector('input[name="regex_target"]:checked').value,
     ip_lookup_field: ui.ipLookupField.value,
     ip_provider: document.querySelector('input[name="ip_provider"]:checked').value,
+    ip_locale: document.querySelector('input[name="ip_locale"]:checked').value,
     country_filter: ui.countryFilter.value,
     country_filter_mode: document.querySelector('input[name="country_filter_mode"]:checked').value,
     additional_chat_ids: ui.additionalChatIds.value

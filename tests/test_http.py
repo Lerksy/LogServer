@@ -116,6 +116,7 @@ class HTTPIntegrationTests(unittest.TestCase):
             "regex_target": "message",
             "ip_lookup_field": "src_ip",
             "ip_provider": "2ip",
+            "ip_locale": "de",
             "country_filter": r"^(Germany|France)$",
             "country_filter_mode": "include",
             "additional_chat_ids": ["-1002", "@operations"],
@@ -129,6 +130,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(created["name"], "Errors")
         self.assertEqual(created["ip_lookup_field"], "src_ip")
         self.assertEqual(created["ip_provider"], "2ip")
+        self.assertEqual(created["ip_locale"], "de")
         self.assertEqual(created["country_filter"], r"^(Germany|France)$")
         self.assertEqual(created["additional_chat_ids"], ["-1002", "@operations"])
 

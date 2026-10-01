@@ -110,6 +110,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(rule.name, "Existing rule")
         self.assertEqual(rule.ip_lookup_field, "")
         self.assertEqual(rule.ip_provider, "ipapi")
+        self.assertEqual(rule.ip_locale, "en")
         self.assertEqual(rule.country_filter, "")
         self.assertEqual(rule.country_filter_mode, "include")
         self.assertEqual(rule.additional_chat_ids, ())

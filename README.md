@@ -237,6 +237,13 @@ not provide the abuse fields, so those fields are also marked unavailable when
 that provider is selected. Changing or removing the 2ip.io token invalidates
 its cached results so abuse data can be refreshed.
 
+Each rule can send `en`, `ua`, `de`, or `ru` through 2ip.io's `lang` argument.
+The language applies to its geolocation response, and each language has a
+separate cache entry. Because the country filter evaluates the localized
+country name, update an exact-name filter when changing language—for example,
+`^Ukraine$` for English or `^Україна$` for Ukrainian. The language setting is
+ignored when ipapi.co is selected.
+
 Enabling enrichment sends the captured public IP address to the selected
 provider. Geolocation is approximate and should not be treated as a precise
 physical location.

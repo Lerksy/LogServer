@@ -107,10 +107,17 @@
                 <label><input type="radio" name="ip_provider" value="ipapi" checked><span>ipapi.co</span></label>
                 <label><input type="radio" name="ip_provider" value="2ip"><span>2ip.io + abuses</span></label>
               </fieldset>
+              <fieldset class="choice-field">
+                <legend>2ip.io response language</legend>
+                <label><input type="radio" name="ip_locale" value="en" checked><span>EN</span></label>
+                <label><input type="radio" name="ip_locale" value="ua"><span>UA</span></label>
+                <label><input type="radio" name="ip_locale" value="de"><span>DE</span></label>
+                <label><input type="radio" name="ip_locale" value="ru"><span>RU</span></label>
+              </fieldset>
               <label class="field">
                 <span>Country filter <i>optional regex</i></span>
                 <input id="countryFilter" class="code-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="^(United Kingdom|Germany)$">
-                <small>Case-insensitive match against the enriched country name. Filtering happens per batch entry.</small>
+                <small>Case-insensitive match against the localized country name. Filtering happens per batch entry.</small>
               </label>
               <fieldset class="choice-field">
                 <legend>Country filter action</legend>

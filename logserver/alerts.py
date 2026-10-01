@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .database import LogDatabase
-from .ipintel import IPEnricher, IPInfo, IP_PROVIDERS, IP_TEMPLATE_FIELDS
+from .ipintel import IPEnricher, IPInfo, IP_PROVIDERS, IP_TEMPLATE_FIELDS, TWOIP_LANGUAGES
 from .models import LogRecord, utc_now
 from .search import SearchSyntaxError, compile_search
 
@@ -79,6 +79,7 @@ class AlertRule:
     regex_target: str
     ip_lookup_field: str
     ip_provider: str
+    ip_locale: str
     country_filter: str
     country_filter_mode: str
     additional_chat_ids: tuple[str, ...]
@@ -160,7 +161,7 @@ class AlertRepository:
                 )
                 changed = True
             if changed:
-                connection.execute("DELETE FROM ip_intel_cache WHERE provider = '2ip'")
+                connection.execute("DELETE FROM ip_intel_cache WHERE provider LIKE '2ip%'")
         return self.get_ip_service_settings()
 
     def list_rules(self, *, enabled_only: bool = False) -> list[AlertRule]:
@@ -184,14 +185,15 @@ class AlertRepository:
                 """
                 INSERT INTO alert_rules (
                     name, enabled, query, regex, regex_target, ip_lookup_field,
-                    ip_provider, country_filter, country_filter_mode, additional_chat_ids, template,
+                    ip_provider, ip_locale, country_filter, country_filter_mode,
+                    additional_chat_ids, template,
                     parse_mode, cooldown_seconds, batch_window_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
                     values["regex_target"], values["ip_lookup_field"], values["ip_provider"],
-                    values["country_filter"],
+                    values["ip_locale"], values["country_filter"],
                     values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
                     values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], now, now,
@@ -208,7 +210,8 @@ class AlertRepository:
                 """
                 UPDATE alert_rules SET
                     name = ?, enabled = ?, query = ?, regex = ?, regex_target = ?,
-                    ip_lookup_field = ?, ip_provider = ?, country_filter = ?, country_filter_mode = ?,
+                    ip_lookup_field = ?, ip_provider = ?, ip_locale = ?,
+                    country_filter = ?, country_filter_mode = ?,
                     additional_chat_ids = ?, template = ?, parse_mode = ?, cooldown_seconds = ?,
                     batch_window_seconds = ?, updated_at = ?
                 WHERE id = ?
@@ -216,7 +219,7 @@ class AlertRepository:
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
                     values["regex_target"], values["ip_lookup_field"], values["ip_provider"],
-                    values["country_filter"],
+                    values["ip_locale"], values["country_filter"],
                     values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
                     values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], utc_now(), rule_id,
@@ -258,7 +261,7 @@ class AlertRepository:
         return AlertRule(
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]), query=row["query"],
             regex=row["regex"], regex_target=row["regex_target"], ip_lookup_field=row["ip_lookup_field"],
-            ip_provider=row["ip_provider"],
+            ip_provider=row["ip_provider"], ip_locale=row["ip_locale"],
             country_filter=row["country_filter"], country_filter_mode=row["country_filter_mode"],
             additional_chat_ids=tuple(json.loads(row["additional_chat_ids"])),
             template=row["template"],
@@ -308,6 +311,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     target = payload.get("regex_target", "message")
     ip_lookup_field = payload.get("ip_lookup_field", "")
     ip_provider = payload.get("ip_provider", "ipapi")
+    ip_locale = payload.get("ip_locale", "en")
     country_filter = payload.get("country_filter", "")
     country_filter_mode = payload.get("country_filter_mode", "include")
     additional_chat_ids = payload.get("additional_chat_ids", [])
@@ -345,6 +349,8 @@ def validate_rule(payload: Any) -> dict[str, Any]:
             )
     if not isinstance(ip_provider, str) or ip_provider not in IP_PROVIDERS:
         raise AlertValidationError("ip_provider must be 'ipapi' or '2ip'")
+    if not isinstance(ip_locale, str) or ip_locale not in TWOIP_LANGUAGES:
+        raise AlertValidationError("ip_locale must be 'en', 'ua', 'de', or 'ru'")
     if not isinstance(country_filter, str) or len(country_filter.strip()) > 500:
         raise AlertValidationError("country_filter must be a string of at most 500 characters")
     country_filter = country_filter.strip()
@@ -386,7 +392,8 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     _validate_template(template, compiled, bool(ip_lookup_field))
     return {
         "name": name.strip(), "enabled": enabled, "query": query.strip(), "regex": pattern,
-        "regex_target": target, "ip_lookup_field": ip_lookup_field, "ip_provider": ip_provider,
+        "regex_target": target, "ip_lookup_field": ip_lookup_field,
+        "ip_provider": ip_provider, "ip_locale": ip_locale,
         "country_filter": country_filter, "country_filter_mode": country_filter_mode,
         "additional_chat_ids": normalized_chat_ids,
         "template": template, "parse_mode": parse_mode,
@@ -501,7 +508,7 @@ class AlertDispatcher:
         database: LogDatabase,
         repository: AlertRepository,
         sender: Callable[[TelegramSettings, str, str], None] | None = None,
-        enricher: Callable[[str, str], IPInfo] | None = None,
+        enricher: Callable[[str, str, str], IPInfo] | None = None,
     ):
         self.database = database
         self.repository = repository
@@ -556,7 +563,7 @@ class AlertDispatcher:
                     continue
                 if rule.ip_lookup_field:
                     ip_value = str(context.get(rule.ip_lookup_field, ""))
-                    context.update(self.enricher(ip_value, rule.ip_provider).to_context())
+                    context.update(self.enricher(ip_value, rule.ip_provider, rule.ip_locale).to_context())
                 if not self._country_allowed(rule, context):
                     continue
                 rendered_context = {
