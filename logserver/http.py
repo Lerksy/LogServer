@@ -14,6 +14,7 @@ from .alerts import (
     AlertRepository,
     AlertValidationError,
     TelegramError,
+    validate_ip_service_settings,
     validate_rule,
     validate_telegram_settings,
 )
@@ -64,6 +65,8 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._stream_logs()
         elif parsed.path == "/api/admin/telegram":
             self._json(HTTPStatus.OK, self.server.alert_repository.get_telegram_settings().to_public_dict())
+        elif parsed.path == "/api/admin/ip-services":
+            self._json(HTTPStatus.OK, self.server.alert_repository.get_ip_service_settings().to_public_dict())
         elif parsed.path == "/api/admin/rules":
             rules = [rule.to_dict() for rule in self.server.alert_repository.list_rules()]
             self._json(HTTPStatus.OK, {"items": rules})
@@ -100,6 +103,15 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             try:
                 values = validate_telegram_settings(payload)
                 settings = self.server.alert_repository.update_telegram_settings(**values)
+            except AlertValidationError as exc:
+                self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
+                return
+            self._json(HTTPStatus.OK, settings.to_public_dict())
+            return
+        if parsed.path == "/api/admin/ip-services":
+            try:
+                values = validate_ip_service_settings(payload)
+                settings = self.server.alert_repository.update_ip_service_settings(**values)
             except AlertValidationError as exc:
                 self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
                 return

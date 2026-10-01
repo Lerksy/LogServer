@@ -11,6 +11,7 @@
 .config-status { padding: 4px 9px; color: var(--orange); border: 1px solid currentColor; border-radius: 99px; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
 .config-status.ready { color: var(--green); }
 .telegram-form { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 14px; }
+.ip-service-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field > span, .choice-field legend, .placeholder-section > span { color: #a6b5b0; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em; }
 .field span i { color: var(--muted); font-weight: 400; font-style: normal; text-transform: none; letter-spacing: 0; }
@@ -22,6 +23,7 @@
 .field code { color: #b7c7c1; }
 .form-actions { display: flex; align-items: center; gap: 9px; }
 .telegram-actions { padding-bottom: 18px; }
+.ip-service-actions { padding-bottom: 18px; }
 .primary-button, .secondary-button, .danger-button, .danger-link, .icon-button { height: 39px; padding: 0 14px; border-radius: 7px; cursor: pointer; font: 600 11px ui-sans-serif, sans-serif; }
 .primary-button { color: #062317; border: 1px solid var(--green); background: var(--green); }
 .primary-button:hover { filter: brightness(1.08); }
@@ -83,7 +85,7 @@
 }
 @media (max-width: 720px) {
   .manage-main { padding-inline: 12px; }
-  .telegram-form, .field-grid { grid-template-columns: 1fr; }
+  .telegram-form, .ip-service-form, .field-grid { grid-template-columns: 1fr; }
   .telegram-actions, .wide { grid-column: auto; }
   .rules-layout { grid-template-columns: 1fr; }
   .rules-sidebar { position: static; }
@@ -91,4 +93,3 @@
   .rule-editor { padding: 17px; }
   .choice-field { flex-wrap: wrap; }
 }
-

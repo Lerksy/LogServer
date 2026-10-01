@@ -109,6 +109,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertIsNotNone(rule)
         self.assertEqual(rule.name, "Existing rule")
         self.assertEqual(rule.ip_lookup_field, "")
+        self.assertEqual(rule.ip_provider, "ipapi")
         self.assertEqual(rule.country_filter, "")
         self.assertEqual(rule.country_filter_mode, "include")
         self.assertEqual(rule.additional_chat_ids, ())
@@ -116,7 +117,15 @@ class DatabaseTests(unittest.TestCase):
             cache_exists = connection.execute(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_lookup_cache'"
             ).fetchone()[0]
+            intel_cache_exists = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_intel_cache'"
+            ).fetchone()[0]
+            service_settings_exist = connection.execute(
+                "SELECT count(*) FROM ip_service_settings WHERE id = 1"
+            ).fetchone()[0]
         self.assertEqual(cache_exists, 1)
+        self.assertEqual(intel_cache_exists, 1)
+        self.assertEqual(service_settings_exist, 1)
 
 
 if __name__ == "__main__":

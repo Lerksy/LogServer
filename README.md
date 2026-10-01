@@ -207,27 +207,45 @@ selected; markup written directly in the template remains active.
 
 ### IP enrichment
 
-An alert can enrich one named regex capture with data from
-[ipapi.co](https://ipapi.co/api/). For example, after capturing an address as
-`(?P<src_ip>...)`, enter `src_ip` in the rule's **IP enrichment** field. The
-following fields then become available in the message template:
+An alert can enrich one named regex capture through either
+[ipapi.co](https://ipapi.co/api/) or [2ip.io](https://2ip.io/api-docs/). For
+example, after capturing an address as `(?P<src_ip>...)`, enter `src_ip` in the
+rule's **IP enrichment** field and select the provider. The following fields
+then become available in the message template:
 
 - `{ip_country}` — country name.
 - `{ip_city}` — city name; omit it from the template when it is not useful.
 - `{ip_company}` — network owner or organization.
+- `{ip_abuse_count}` — number of 2ip.io abuse reports.
+- `{ip_abuse_summary}` — unique abuse descriptions, or the reason they are
+  unavailable.
+- `{ip_abuse_last_seen}` — newest report timestamp returned by 2ip.io.
 
 Successful responses are cached in SQLite for 30 days. Failed lookups are
-cached for one hour, and requests to ipapi.co are spaced at least one second
-apart. Invalid, private, loopback, link-local, and other non-public addresses
-are never sent to the external service. If a lookup is unavailable, all three
-fields render as `Unknown` and the alert is still delivered. Enabling this
-option sends the captured public IP address to ipapi.co; its geolocation is
-approximate and should not be treated as a precise physical location.
+cached for one hour, requests are spaced at least one second apart, and cache
+keys include both the provider and IP address. Existing ipapi.co cache entries
+are migrated automatically. Invalid, private, loopback, link-local, and other
+non-public addresses are never sent to either external service. If a lookup is
+unavailable, its fields render as `Unknown` and the alert is still delivered.
+
+2ip.io geolocation currently works without a token, but its abuse endpoint
+requires one. Store the token in **IP intelligence services** on the management
+page; it is kept in SQLite and never returned by the HTTP API. Without a token,
+2ip.io still supplies location and ASN data while `{ip_abuse_count}` renders as
+`Unavailable` and `{ip_abuse_summary}` as `2ip token required`. ipapi.co does
+not provide the abuse fields, so those fields are also marked unavailable when
+that provider is selected. Changing or removing the 2ip.io token invalidates
+its cached results so abuse data can be refreshed.
+
+Enabling enrichment sends the captured public IP address to the selected
+provider. Geolocation is approximate and should not be treated as a precise
+physical location.
 
 Example body:
 
 ```text
 • {src_ip}:{src_port} — {ip_country}, {ip_city} — {ip_company}
+  Abuse reports: {ip_abuse_count} ({ip_abuse_summary})
 ```
 
 To filter enriched entries before they are added to a batch, enter a
@@ -280,8 +298,8 @@ batches rather than individual log rows.
 The management API and page intentionally have no built-in login, matching the
 read-only live console's trusted-LAN model. Do not expose port `8080` directly
 to the internet; use an authenticated HTTPS reverse proxy if remote access is
-needed. The management endpoints are under `/api/admin/telegram` and
-`/api/admin/rules`.
+needed. The management endpoints are under `/api/admin/telegram`,
+`/api/admin/ip-services`, and `/api/admin/rules`.
 
 ## Tests
 

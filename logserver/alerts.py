@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import ipaddress
 import json
 import queue
 import re
@@ -10,7 +9,6 @@ import string
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -19,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .database import LogDatabase
+from .ipintel import IPEnricher, IPInfo, IP_PROVIDERS, IP_TEMPLATE_FIELDS
 from .models import LogRecord, utc_now
 from .search import SearchSyntaxError, compile_search
 
@@ -27,7 +26,6 @@ BUILTIN_TEMPLATE_FIELDS = {
     "id", "time", "received_at", "event_at", "source", "facility", "severity",
     "topics", "message", "raw", "transport", "count",
 }
-IP_TEMPLATE_FIELDS = {"ip_country", "ip_city", "ip_company"}
 PARSE_MODES = {"", "HTML", "MarkdownV2"}
 REGEX_TARGETS = {"message", "raw"}
 COUNTRY_FILTER_MODES = {"include", "exclude"}
@@ -60,145 +58,15 @@ class TelegramSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class IPInfo:
-    country: str
-    city: str
-    company: str
+class IPServiceSettings:
+    twoip_token: str
+    updated_at: str
 
-    def to_context(self) -> dict[str, str]:
+    def to_public_dict(self) -> dict[str, Any]:
         return {
-            "ip_country": self.country,
-            "ip_city": self.city,
-            "ip_company": self.company,
+            "twoip_token_configured": bool(self.twoip_token),
+            "updated_at": self.updated_at or None,
         }
-
-
-class IPEnricher:
-    def __init__(
-        self,
-        database_path: Path | str,
-        *,
-        fetcher: Callable[[str], dict[str, Any]] | None = None,
-        cache_days: int = 30,
-        failure_hours: int = 1,
-        minimum_interval: float = 1.0,
-    ):
-        self.path = Path(database_path)
-        self.fetcher = fetcher or self._fetch_ipapi
-        self.cache_ttl = timedelta(days=cache_days)
-        self.failure_ttl = timedelta(hours=failure_hours)
-        self.minimum_interval = minimum_interval
-        self._next_request_at = 0.0
-
-    def lookup(self, value: str) -> IPInfo:
-        try:
-            address = ipaddress.ip_address(value.strip())
-        except ValueError:
-            return self._unknown()
-        ip = address.compressed
-        cached = self._cached(ip)
-        if cached is not None:
-            return cached
-        if not address.is_global:
-            result = self._unknown()
-            self._store(ip, result, self.cache_ttl, "non-public IP address")
-            return result
-
-        wait = self._next_request_at - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        self._next_request_at = time.monotonic() + self.minimum_interval
-        try:
-            payload = self.fetcher(ip)
-            if payload.get("error"):
-                raise RuntimeError(str(payload.get("reason") or payload.get("message") or "lookup failed"))
-            result = IPInfo(
-                country=self._value(payload.get("country_name")),
-                city=self._value(payload.get("city")),
-                company=self._value(payload.get("org")),
-            )
-            if result == self._unknown():
-                raise RuntimeError("lookup returned no location or organization data")
-            self._store(ip, result, self.cache_ttl, None)
-            return result
-        except Exception as exc:
-            result = self._unknown()
-            self._store(ip, result, self.failure_ttl, str(exc))
-            return result
-
-    def _cached(self, ip: str) -> IPInfo | None:
-        with closing(self._connect()) as connection:
-            row = connection.execute("SELECT * FROM ip_lookup_cache WHERE ip = ?", (ip,)).fetchone()
-        if row is None:
-            return None
-        try:
-            expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if expires_at <= datetime.now(timezone.utc):
-            return None
-        return IPInfo(row["country"], row["city"], row["company"])
-
-    def _store(self, ip: str, result: IPInfo, ttl: timedelta, error: str | None) -> None:
-        now = datetime.now(timezone.utc)
-        fetched_at = self._timestamp(now)
-        expires_at = self._timestamp(now + ttl)
-        with closing(self._connect()) as connection, connection:
-            connection.execute("DELETE FROM ip_lookup_cache WHERE expires_at <= ?", (fetched_at,))
-            connection.execute(
-                """
-                INSERT INTO ip_lookup_cache (
-                    ip, country, city, company, fetched_at, expires_at, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(ip) DO UPDATE SET
-                    country = excluded.country,
-                    city = excluded.city,
-                    company = excluded.company,
-                    fetched_at = excluded.fetched_at,
-                    expires_at = excluded.expires_at,
-                    error = excluded.error
-                """,
-                (ip, result.country, result.city, result.company, fetched_at, expires_at, (error or "")[:500] or None),
-            )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
-
-    @staticmethod
-    def _fetch_ipapi(ip: str) -> dict[str, Any]:
-        encoded_ip = urllib.parse.quote(ip, safe="")
-        request = urllib.request.Request(
-            f"https://ipapi.co/{encoded_ip}/json/",
-            headers={"Accept": "application/json", "User-Agent": "MikroTik-LogServer/0.1"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=5) as response:
-                payload = json.load(response)
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"ipapi.co returned HTTP {exc.code}") from exc
-        except (OSError, TimeoutError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"ipapi.co lookup failed: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("ipapi.co returned an invalid response")
-        return payload
-
-    @staticmethod
-    def _value(value: Any) -> str:
-        if value is None:
-            return "Unknown"
-        text = str(value).strip()
-        return text[:255] if text else "Unknown"
-
-    @staticmethod
-    def _unknown() -> IPInfo:
-        return IPInfo("Unknown", "Unknown", "Unknown")
-
-    @staticmethod
-    def _timestamp(value: datetime) -> str:
-        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +78,7 @@ class AlertRule:
     regex: str
     regex_target: str
     ip_lookup_field: str
+    ip_provider: str
     country_filter: str
     country_filter_mode: str
     additional_chat_ids: tuple[str, ...]
@@ -263,6 +132,37 @@ class AlertRepository:
                 )
         return self.get_telegram_settings()
 
+    def get_ip_service_settings(self) -> IPServiceSettings:
+        with closing(self._connect()) as connection:
+            row = connection.execute("SELECT * FROM ip_service_settings WHERE id = 1").fetchone()
+        assert row is not None
+        return IPServiceSettings(row["twoip_token"], row["updated_at"])
+
+    def update_ip_service_settings(
+        self,
+        *,
+        twoip_token: str | None = None,
+        clear_twoip_token: bool = False,
+    ) -> IPServiceSettings:
+        now = utc_now()
+        with closing(self._connect()) as connection, connection:
+            changed = False
+            if clear_twoip_token:
+                connection.execute(
+                    "UPDATE ip_service_settings SET twoip_token = '', updated_at = ? WHERE id = 1",
+                    (now,),
+                )
+                changed = True
+            elif twoip_token:
+                connection.execute(
+                    "UPDATE ip_service_settings SET twoip_token = ?, updated_at = ? WHERE id = 1",
+                    (twoip_token, now),
+                )
+                changed = True
+            if changed:
+                connection.execute("DELETE FROM ip_intel_cache WHERE provider = '2ip'")
+        return self.get_ip_service_settings()
+
     def list_rules(self, *, enabled_only: bool = False) -> list[AlertRule]:
         sql = "SELECT * FROM alert_rules"
         if enabled_only:
@@ -284,13 +184,14 @@ class AlertRepository:
                 """
                 INSERT INTO alert_rules (
                     name, enabled, query, regex, regex_target, ip_lookup_field,
-                    country_filter, country_filter_mode, additional_chat_ids, template,
+                    ip_provider, country_filter, country_filter_mode, additional_chat_ids, template,
                     parse_mode, cooldown_seconds, batch_window_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["ip_lookup_field"], values["country_filter"],
+                    values["regex_target"], values["ip_lookup_field"], values["ip_provider"],
+                    values["country_filter"],
                     values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
                     values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], now, now,
@@ -307,14 +208,15 @@ class AlertRepository:
                 """
                 UPDATE alert_rules SET
                     name = ?, enabled = ?, query = ?, regex = ?, regex_target = ?,
-                    ip_lookup_field = ?, country_filter = ?, country_filter_mode = ?,
+                    ip_lookup_field = ?, ip_provider = ?, country_filter = ?, country_filter_mode = ?,
                     additional_chat_ids = ?, template = ?, parse_mode = ?, cooldown_seconds = ?,
                     batch_window_seconds = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     values["name"], int(values["enabled"]), values["query"], values["regex"],
-                    values["regex_target"], values["ip_lookup_field"], values["country_filter"],
+                    values["regex_target"], values["ip_lookup_field"], values["ip_provider"],
+                    values["country_filter"],
                     values["country_filter_mode"], json.dumps(values["additional_chat_ids"]),
                     values["template"], values["parse_mode"],
                     values["cooldown_seconds"], values["batch_window_seconds"], utc_now(), rule_id,
@@ -356,6 +258,7 @@ class AlertRepository:
         return AlertRule(
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]), query=row["query"],
             regex=row["regex"], regex_target=row["regex_target"], ip_lookup_field=row["ip_lookup_field"],
+            ip_provider=row["ip_provider"],
             country_filter=row["country_filter"], country_filter_mode=row["country_filter_mode"],
             additional_chat_ids=tuple(json.loads(row["additional_chat_ids"])),
             template=row["template"],
@@ -381,6 +284,21 @@ def validate_telegram_settings(payload: Any) -> dict[str, Any]:
     return {"chat_id": chat_id.strip(), "bot_token": token.strip() if token else None, "clear_token": clear_token}
 
 
+def validate_ip_service_settings(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise AlertValidationError("settings must be a JSON object")
+    token = payload.get("twoip_token")
+    clear_token = payload.get("clear_twoip_token", False)
+    if token is not None and (not isinstance(token, str) or len(token.strip()) > 500):
+        raise AlertValidationError("twoip_token must be a string of at most 500 characters")
+    if not isinstance(clear_token, bool):
+        raise AlertValidationError("clear_twoip_token must be a boolean")
+    return {
+        "twoip_token": token.strip() if token else None,
+        "clear_twoip_token": clear_token,
+    }
+
+
 def validate_rule(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AlertValidationError("rule must be a JSON object")
@@ -389,6 +307,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     pattern = payload.get("regex", "")
     target = payload.get("regex_target", "message")
     ip_lookup_field = payload.get("ip_lookup_field", "")
+    ip_provider = payload.get("ip_provider", "ipapi")
     country_filter = payload.get("country_filter", "")
     country_filter_mode = payload.get("country_filter_mode", "include")
     additional_chat_ids = payload.get("additional_chat_ids", [])
@@ -424,6 +343,8 @@ def validate_rule(payload: Any) -> dict[str, Any]:
             raise AlertValidationError(
                 "ip_lookup_field must name a capture from the rule's regular expression"
             )
+    if not isinstance(ip_provider, str) or ip_provider not in IP_PROVIDERS:
+        raise AlertValidationError("ip_provider must be 'ipapi' or '2ip'")
     if not isinstance(country_filter, str) or len(country_filter.strip()) > 500:
         raise AlertValidationError("country_filter must be a string of at most 500 characters")
     country_filter = country_filter.strip()
@@ -465,7 +386,7 @@ def validate_rule(payload: Any) -> dict[str, Any]:
     _validate_template(template, compiled, bool(ip_lookup_field))
     return {
         "name": name.strip(), "enabled": enabled, "query": query.strip(), "regex": pattern,
-        "regex_target": target, "ip_lookup_field": ip_lookup_field,
+        "regex_target": target, "ip_lookup_field": ip_lookup_field, "ip_provider": ip_provider,
         "country_filter": country_filter, "country_filter_mode": country_filter_mode,
         "additional_chat_ids": normalized_chat_ids,
         "template": template, "parse_mode": parse_mode,
@@ -580,13 +501,16 @@ class AlertDispatcher:
         database: LogDatabase,
         repository: AlertRepository,
         sender: Callable[[TelegramSettings, str, str], None] | None = None,
-        enricher: Callable[[str], IPInfo] | None = None,
+        enricher: Callable[[str, str], IPInfo] | None = None,
     ):
         self.database = database
         self.repository = repository
         client = TelegramClient()
         self.sender = sender or client.send
-        self.enricher = enricher or IPEnricher(repository.path).lookup
+        self.enricher = enricher or IPEnricher(
+            repository.path,
+            twoip_token_getter=lambda: repository.get_ip_service_settings().twoip_token,
+        ).lookup
         self._queue: queue.Queue[LogRecord | None] = queue.Queue(maxsize=2000)
         self._thread: threading.Thread | None = None
         self._pending: dict[int, _PendingBatch] = {}
@@ -632,7 +556,7 @@ class AlertDispatcher:
                     continue
                 if rule.ip_lookup_field:
                     ip_value = str(context.get(rule.ip_lookup_field, ""))
-                    context.update(self.enricher(ip_value).to_context())
+                    context.update(self.enricher(ip_value, rule.ip_provider).to_context())
                 if not self._country_allowed(rule, context):
                     continue
                 rendered_context = {

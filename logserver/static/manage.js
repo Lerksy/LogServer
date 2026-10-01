@@ -8,6 +8,11 @@ const ui = {
   telegramStatus: document.querySelector("#telegramStatus"),
   testTelegram: document.querySelector("#testTelegram"),
   clearToken: document.querySelector("#clearToken"),
+  ipServiceForm: document.querySelector("#ipServiceForm"),
+  twoipToken: document.querySelector("#twoipToken"),
+  twoipTokenHint: document.querySelector("#twoipTokenHint"),
+  twoipStatus: document.querySelector("#twoipStatus"),
+  clearTwoipToken: document.querySelector("#clearTwoipToken"),
   ruleList: document.querySelector("#ruleList"),
   noRules: document.querySelector("#noRules"),
   newRule: document.querySelector("#newRule"),
@@ -44,11 +49,13 @@ async function api(path, options = {}) {
 
 async function loadAll() {
   try {
-    const [settings, rules] = await Promise.all([
+    const [settings, ipSettings, rules] = await Promise.all([
       api("/api/admin/telegram"),
+      api("/api/admin/ip-services"),
       api("/api/admin/rules"),
     ]);
     renderTelegram(settings);
+    renderIPServices(ipSettings);
     state.rules = rules.items;
     renderRules();
     if (state.selectedId) {
@@ -58,6 +65,15 @@ async function loadAll() {
   } catch (error) {
     toast(error.message, true);
   }
+}
+
+function renderIPServices(settings) {
+  ui.twoipToken.value = "";
+  ui.twoipStatus.textContent = settings.twoip_token_configured ? "2ip ready" : "Token optional";
+  ui.twoipStatus.classList.toggle("ready", settings.twoip_token_configured);
+  ui.twoipTokenHint.textContent = settings.twoip_token_configured
+    ? "A 2ip token is saved. Leave this empty to keep it unchanged."
+    : "Location works without a token; abuse reports require one. The token is never returned.";
 }
 
 function renderTelegram(settings) {
@@ -89,7 +105,8 @@ function ruleCard(rule) {
   head.append(name, rule.last_error ? errorDot(rule.last_error) : stateLabel);
   const meta = document.createElement("small");
   const copies = rule.additional_chat_ids?.length || 0;
-  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? " · IP lookup" : ""}${rule.country_filter ? " · Country filter" : ""}${copies ? ` · ${copies} extra chat${copies === 1 ? "" : "s"}` : ""}`;
+  const provider = rule.ip_provider === "2ip" ? "2ip" : "ipapi";
+  meta.textContent = `${rule.sent_count.toLocaleString()} batches sent · ${rule.batch_window_seconds}s batch${rule.ip_lookup_field ? ` · ${provider}` : ""}${rule.country_filter ? " · Country filter" : ""}${copies ? ` · ${copies} extra chat${copies === 1 ? "" : "s"}` : ""}`;
   button.append(head, meta);
   button.addEventListener("click", () => editRule(rule));
   return button;
@@ -134,6 +151,7 @@ function editRule(rule) {
   ui.cooldown.value = rule.cooldown_seconds;
   ui.ruleTemplate.value = rule.template;
   setRadio("regex_target", rule.regex_target);
+  setRadio("ip_provider", rule.ip_provider || "ipapi");
   setRadio("country_filter_mode", rule.country_filter_mode || "include");
   setRadio("parse_mode", rule.parse_mode);
   ui.editorMode.textContent = `Rule #${rule.id}`;
@@ -166,6 +184,7 @@ function rulePayload() {
     regex: ui.ruleRegex.value,
     regex_target: document.querySelector('input[name="regex_target"]:checked').value,
     ip_lookup_field: ui.ipLookupField.value,
+    ip_provider: document.querySelector('input[name="ip_provider"]:checked').value,
     country_filter: ui.countryFilter.value,
     country_filter_mode: document.querySelector('input[name="country_filter_mode"]:checked').value,
     additional_chat_ids: ui.additionalChatIds.value
@@ -186,6 +205,29 @@ ui.telegramForm.addEventListener("submit", async (event) => {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     }));
     toast("Telegram settings saved");
+  } catch (error) { toast(error.message, true); }
+});
+
+ui.ipServiceForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {};
+  if (ui.twoipToken.value) payload.twoip_token = ui.twoipToken.value;
+  try {
+    renderIPServices(await api("/api/admin/ip-services", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    }));
+    toast("IP service settings saved");
+  } catch (error) { toast(error.message, true); }
+});
+
+ui.clearTwoipToken.addEventListener("click", async () => {
+  if (!confirm("Remove the stored 2ip.io token? Abuse lookups will become unavailable.")) return;
+  try {
+    renderIPServices(await api("/api/admin/ip-services", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clear_twoip_token: true }),
+    }));
+    toast("2ip.io token removed");
   } catch (error) { toast(error.message, true); }
 });
 

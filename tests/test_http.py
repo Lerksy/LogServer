@@ -51,7 +51,9 @@ class HTTPIntegrationTests(unittest.TestCase):
         response = urllib.request.urlopen(self.base_url + "/", timeout=2)
         self.assertIn(b"Router LogServer", response.read())
         response = urllib.request.urlopen(self.base_url + "/manage", timeout=2)
-        self.assertIn(b"Alert Management", response.read())
+        management = response.read()
+        self.assertIn(b"Alert Management", management)
+        self.assertIn(b"IP intelligence services", management)
 
     def test_ingest_requires_token(self):
         status, body = self.request("/api/logs", method="POST", payload={"message": "denied"})
@@ -94,6 +96,18 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertTrue(settings["bot_token_configured"])
         self.assertNotIn("bot_token", settings)
 
+        status, ip_settings = self.request(
+            "/api/admin/ip-services",
+            method="PUT",
+            payload={"twoip_token": "twoip-secret"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(ip_settings["twoip_token_configured"])
+        self.assertNotIn("twoip_token", ip_settings)
+        status, ip_settings = self.request("/api/admin/ip-services")
+        self.assertEqual(status, 200)
+        self.assertTrue(ip_settings["twoip_token_configured"])
+
         rule = {
             "name": "Errors",
             "enabled": True,
@@ -101,6 +115,7 @@ class HTTPIntegrationTests(unittest.TestCase):
             "regex": r"src=(?P<src_ip>\S+)",
             "regex_target": "message",
             "ip_lookup_field": "src_ip",
+            "ip_provider": "2ip",
             "country_filter": r"^(Germany|France)$",
             "country_filter_mode": "include",
             "additional_chat_ids": ["-1002", "@operations"],
@@ -113,6 +128,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(created["name"], "Errors")
         self.assertEqual(created["ip_lookup_field"], "src_ip")
+        self.assertEqual(created["ip_provider"], "2ip")
         self.assertEqual(created["country_filter"], r"^(Germany|France)$")
         self.assertEqual(created["additional_chat_ids"], ["-1002", "@operations"])
 

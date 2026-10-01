@@ -45,6 +45,13 @@ class LogDatabase:
                 );
                 INSERT OR IGNORE INTO telegram_settings (id, updated_at) VALUES (1, '');
 
+                CREATE TABLE IF NOT EXISTS ip_service_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    twoip_token TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO ip_service_settings (id, updated_at) VALUES (1, '');
+
                 CREATE TABLE IF NOT EXISTS alert_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -53,6 +60,7 @@ class LogDatabase:
                     regex TEXT NOT NULL DEFAULT '',
                     regex_target TEXT NOT NULL DEFAULT 'message',
                     ip_lookup_field TEXT NOT NULL DEFAULT '',
+                    ip_provider TEXT NOT NULL DEFAULT 'ipapi',
                     country_filter TEXT NOT NULL DEFAULT '',
                     country_filter_mode TEXT NOT NULL DEFAULT 'include',
                     additional_chat_ids TEXT NOT NULL DEFAULT '[]',
@@ -79,6 +87,23 @@ class LogDatabase:
                 );
                 CREATE INDEX IF NOT EXISTS idx_ip_lookup_cache_expires_at
                     ON ip_lookup_cache(expires_at);
+
+                CREATE TABLE IF NOT EXISTS ip_intel_cache (
+                    provider TEXT NOT NULL,
+                    ip TEXT NOT NULL,
+                    country TEXT NOT NULL DEFAULT '',
+                    city TEXT NOT NULL DEFAULT '',
+                    company TEXT NOT NULL DEFAULT '',
+                    abuse_count TEXT NOT NULL DEFAULT 'Unknown',
+                    abuse_summary TEXT NOT NULL DEFAULT 'Unknown',
+                    abuse_last_seen TEXT NOT NULL DEFAULT '',
+                    fetched_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    error TEXT,
+                    PRIMARY KEY (provider, ip)
+                );
+                CREATE INDEX IF NOT EXISTS idx_ip_intel_cache_expires_at
+                    ON ip_intel_cache(expires_at);
                 """
             )
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(alert_rules)")}
@@ -89,6 +114,10 @@ class LogDatabase:
             if "ip_lookup_field" not in columns:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN ip_lookup_field TEXT NOT NULL DEFAULT ''"
+                )
+            if "ip_provider" not in columns:
+                connection.execute(
+                    "ALTER TABLE alert_rules ADD COLUMN ip_provider TEXT NOT NULL DEFAULT 'ipapi'"
                 )
             if "country_filter" not in columns:
                 connection.execute(
@@ -102,6 +131,20 @@ class LogDatabase:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN additional_chat_ids TEXT NOT NULL DEFAULT '[]'"
                 )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO ip_intel_cache (
+                    provider, ip, country, city, company,
+                    abuse_count, abuse_summary, abuse_last_seen,
+                    fetched_at, expires_at, error
+                )
+                SELECT
+                    'ipapi', ip, country, city, company,
+                    'Unavailable', 'Not supported by ipapi.co', '',
+                    fetched_at, expires_at, error
+                FROM ip_lookup_cache
+                """
+            )
 
     def insert(self, item: LogInput) -> LogRecord:
         return self.insert_many([item])[0]

@@ -43,6 +43,25 @@
         </form>
       </section>
 
+      <section class="settings-card">
+        <div class="section-heading">
+          <div><span class="eyebrow">Enrichment</span><h2>IP intelligence services</h2></div>
+          <span class="config-status" id="twoipStatus">Token optional</span>
+        </div>
+        <form id="ipServiceForm" class="ip-service-form">
+          <label class="field">
+            <span>2ip.io token <i>optional for location</i></span>
+            <input id="twoipToken" name="twoip_token" type="password" autocomplete="new-password"
+                   placeholder="Enter the token from 2ip.io">
+            <small id="twoipTokenHint">A token is required for abuse reports and is never returned by the API.</small>
+          </label>
+          <div class="form-actions ip-service-actions">
+            <button class="primary-button" type="submit">Save token</button>
+            <button class="danger-link" id="clearTwoipToken" type="button">Clear token</button>
+          </div>
+        </form>
+      </section>
+
       <div class="rules-layout">
         <aside class="rules-sidebar">
           <div class="section-heading compact">
@@ -81,8 +100,13 @@
               <label class="field">
                 <span>IP enrichment <i>optional</i></span>
                 <input id="ipLookupField" maxlength="64" autocomplete="off" placeholder="src_ip">
-                <small>Name of a regex capture containing the IP. Public IPs are looked up through ipapi.co and cached locally.</small>
+                <small>Name of a regex capture containing the IP. Public results are cached separately for each service.</small>
               </label>
+              <fieldset class="choice-field">
+                <legend>IP information service</legend>
+                <label><input type="radio" name="ip_provider" value="ipapi" checked><span>ipapi.co</span></label>
+                <label><input type="radio" name="ip_provider" value="2ip"><span>2ip.io + abuses</span></label>
+              </fieldset>
               <label class="field">
                 <span>Country filter <i>optional regex</i></span>
                 <input id="countryFilter" class="code-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="^(United Kingdom|Germany)$">
@@ -125,6 +149,9 @@
                   <button type="button" data-placeholder="{ip_country}">{ip_country}</button>
                   <button type="button" data-placeholder="{ip_city}">{ip_city}</button>
                   <button type="button" data-placeholder="{ip_company}">{ip_company}</button>
+                  <button type="button" data-placeholder="{ip_abuse_count}">{ip_abuse_count}</button>
+                  <button type="button" data-placeholder="{ip_abuse_summary}">{ip_abuse_summary}</button>
+                  <button type="button" data-placeholder="{ip_abuse_last_seen}">{ip_abuse_last_seen}</button>
                   <button type="button" data-placeholder="&#10;[[body]]&#10;">[[body]]</button>
                   <button type="button" data-placeholder="&#10;[[/body]]&#10;">[[/body]]</button>
                   <button type="button" data-placeholder="&lt;blockquote expandable&gt;&#10;[[body]]&#10;&#10;[[/body]]&#10;&lt;/blockquote&gt;">Expandable block</button>
