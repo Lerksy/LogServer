@@ -351,6 +351,40 @@ is sent and reports the number of repeated entries in that Telegram message.
 Immediate, non-batched notifications use a count of `1`; automatically split
 messages report the count for their individual chunk.
 
+### Conditional message blocks
+
+Templates can conditionally include text with `[[if ...]]`, optional
+`[[else]]`, and `[[/if]]`. A bare field checks whether useful data is available;
+empty values plus `Unknown` and `Unavailable` count as unavailable, while `0`
+remains an available value:
+
+```text
+[[if ip_abuse_count]]
+• Abuse reports: {ip_abuse_count}
+• Summary: {ip_abuse_summary}
+[[else]]
+• Abuse information unavailable
+[[/if]]
+```
+
+Conditions can use any field available to that rule and may be nested. Supported
+forms are:
+
+```text
+[[if field]]                         available
+[[if not field]]                     unavailable
+[[if severity == error]]             equality
+[[if ip_country != Ukraine]]         inequality
+[[if ip_abuse_count > 0]]            numeric comparison
+[[if message contains denied]]       substring
+[[if ip_country matches ^(UA|PL)$]]  Python regular expression
+```
+
+The other numeric operators are `>=`, `<`, and `<=`. Conditional blocks must be
+fully contained in the header, repeated body, or footer; they cannot open in one
+batch section and close in another. Body conditions are evaluated separately for
+each entry. Header and footer conditions use the first entry in the batch.
+
 Consecutive matching logs are collected into one Telegram message. The batch
 is sent when a nonmatching log arrives or no further match arrives during the
 configured batch window. Set the window to `0` for immediate individual

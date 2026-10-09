@@ -63,6 +63,10 @@ class AlertTests(unittest.TestCase):
     def test_validation_accepts_named_capture_and_rejects_unsafe_template(self):
         values = validate_rule(rule_payload())
         self.assertEqual(values["batch_window_seconds"], 2)
+        values = validate_rule(rule_payload(
+            template="[[if message matches ^drop\\s+src=.{2,}$]]{message}[[/if]]"
+        ))
+        self.assertIn("[[if message matches", values["template"])
         values = validate_rule(rule_payload(additional_chat_ids=[" -1002 ", "-1002", "@ops"]))
         self.assertEqual(values["additional_chat_ids"], ["-1002", "@ops"])
         with self.assertRaises(AlertValidationError):
@@ -83,6 +87,16 @@ class AlertTests(unittest.TestCase):
             validate_rule(rule_payload(template="Header [[/body]] Middle [[body]] Body"))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(template="Header [[body]] Body [[/body]] again [[/body]]"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="[[if missing]]No[[/if]]"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="[[if severity]]No closing marker"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(template="[[if count > 1]]Many[[/if]]"))
+        with self.assertRaises(AlertValidationError):
+            validate_rule(rule_payload(
+                template="[[if severity]]Header [[body]]Body[[/body]]Footer[[/if]]"
+            ))
         with self.assertRaises(AlertValidationError):
             validate_rule(rule_payload(additional_chat_ids="-1002"))
         with self.assertRaises(AlertValidationError):
@@ -148,6 +162,58 @@ class AlertTests(unittest.TestCase):
 
         self.assertEqual(looked_up, [("8.8.8.8", "ipapi", "en")])
         self.assertEqual(self.sent[0][1], "8.8.8.8: United States, Mountain View — Google LLC")
+
+    def test_conditional_abuse_block_uses_raw_values_and_escapes_output(self):
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            enricher=lambda ip, provider, locale: IPInfo(
+                "United States", "New York", "Example", "2", "Scan <reported>", "2026-10-01",
+            ),
+        )
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            ip_lookup_field="src_ip",
+            parse_mode="HTML",
+            template=(
+                "{src_ip}\n[[if ip_abuse_count > 0]]"
+                "Abuse: {ip_abuse_count} — {ip_abuse_summary}"
+                "[[else]]No abuse reports[[/if]]"
+            ),
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+
+        self.assertEqual(self.sent[0][1], "8.8.8.8\nAbuse: 2 — Scan &lt;reported&gt;")
+
+    def test_conditional_abuse_block_hides_unavailable_data(self):
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            enricher=lambda ip, provider, locale: IPInfo(
+                "Unknown", "Unknown", "Unknown", "Unavailable", "2ip token required", "",
+            ),
+        )
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            ip_lookup_field="src_ip",
+            template=(
+                "[[if ip_abuse_count]]Abuse: {ip_abuse_count}"
+                "[[else]]Abuse information unavailable[[/if]]"
+            ),
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+
+        self.assertEqual(self.sent[0][1], "Abuse information unavailable")
 
     def test_ip_enrichment_cache_avoids_duplicate_requests(self):
         calls = []

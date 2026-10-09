@@ -140,7 +140,7 @@
               <label class="field wide">
                 <span>Message template</span>
                 <textarea id="ruleTemplate" class="code-input template-input" rows="6" maxlength="4096" required spellcheck="false"></textarea>
-                <small>Text before <code>[[body]]</code> is the header; text after <code>[[/body]]</code> is the footer. Only the body repeats. Use <code>{count}</code> for the entries in this batch.</small>
+                <small>Text before <code>[[body]]</code> is the header; text after <code>[[/body]]</code> is the footer. Only the body repeats. Use <code>{count}</code> for the entries in this batch. Conditional blocks use <code>[[if field]]</code>, optional <code>[[else]]</code>, and <code>[[/if]]</code>.</small>
               </label>
               <div class="placeholder-section wide">
                 <span>Insert field or batching marker</span>
@@ -161,6 +161,8 @@
                   <button type="button" data-placeholder="{ip_abuse_last_seen}">{ip_abuse_last_seen}</button>
                   <button type="button" data-placeholder="&#10;[[body]]&#10;">[[body]]</button>
                   <button type="button" data-placeholder="&#10;[[/body]]&#10;">[[/body]]</button>
+                  <button type="button" data-placeholder="&#10;[[if ip_abuse_count]]&#10;• Abuse reports: {ip_abuse_count}&#10;• {ip_abuse_summary}&#10;[[/if]]&#10;">Abuse if available</button>
+                  <button type="button" data-placeholder="&#10;[[if field]]&#10;Shown when available&#10;[[else]]&#10;Fallback text&#10;[[/if]]&#10;">Conditional block</button>
                   <button type="button" data-placeholder="&lt;blockquote expandable&gt;&#10;[[body]]&#10;&#10;[[/body]]&#10;&lt;/blockquote&gt;">Expandable block</button>
                 </div>
               </div>

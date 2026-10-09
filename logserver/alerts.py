@@ -18,6 +18,11 @@ from typing import Any, Callable
 
 from .database import LogDatabase
 from .ipintel import IPEnricher, IPInfo, IP_PROVIDERS, IP_TEMPLATE_FIELDS, TWOIP_LANGUAGES
+from .message_template import (
+    ConditionalTemplateError,
+    compile_conditional_template,
+    strip_conditional_directives,
+)
 from .models import LogRecord, utc_now
 from .search import SearchSyntaxError, compile_search
 
@@ -429,8 +434,26 @@ def _validate_template(
     if pattern:
         allowed.update(pattern.groupindex)
         allowed.update(f"group{index}" for index in range(1, pattern.groups + 1))
+    sections = [template]
+    if marker_count:
+        header, remainder = template.split(BATCH_BODY_MARKER, 1)
+        if end_marker_count:
+            body, footer = remainder.split(BATCH_BODY_END_MARKER, 1)
+            sections = [header, body, footer]
+        else:
+            sections = [header, remainder]
     try:
-        parts = string.Formatter().parse(template)
+        for section in sections:
+            conditional = compile_conditional_template(section)
+            for field in conditional.fields:
+                if field == "count":
+                    raise AlertValidationError("{count} cannot be used as a conditional field")
+                if field not in allowed:
+                    raise AlertValidationError(f"unknown conditional field '{field}'")
+    except ConditionalTemplateError as exc:
+        raise AlertValidationError(f"invalid template conditional: {exc}") from exc
+    try:
+        parts = string.Formatter().parse(strip_conditional_directives(template))
         for _literal, field, format_spec, conversion in parts:
             if field is None:
                 continue
@@ -570,7 +593,7 @@ class AlertDispatcher:
                     key: _escape_template_value(str(value), rule.parse_mode) for key, value in context.items()
                 }
                 rendered_context["count"] = BATCH_COUNT_TOKEN
-                rendered = self._render(rule.template, rendered_context)
+                rendered = self._render(rule.template, context, rendered_context)
                 self._append(rule, rendered)
             except Exception as exc:
                 self.repository.record_error(rule.id, str(exc))
@@ -659,20 +682,28 @@ class AlertDispatcher:
         return matches if rule.country_filter_mode == "include" else not matches
 
     @staticmethod
-    def _render(template: str, context: dict[str, str]) -> _RenderedAlert:
+    def _render(
+        template: str,
+        condition_context: dict[str, Any],
+        rendered_context: dict[str, str],
+    ) -> _RenderedAlert:
+        def render_section(section: str) -> str:
+            selected = compile_conditional_template(section).render(condition_context)
+            return selected.strip().format_map(rendered_context)
+
         if BATCH_BODY_MARKER in template:
             header_template, remainder = template.split(BATCH_BODY_MARKER, 1)
             if BATCH_BODY_END_MARKER in remainder:
                 body_template, footer_template = remainder.split(BATCH_BODY_END_MARKER, 1)
             else:
                 body_template, footer_template = remainder, ""
-            header = header_template.strip().format_map(context)
-            body = body_template.strip().format_map(context)
-            footer = footer_template.strip().format_map(context)
+            header = render_section(header_template)
+            body = render_section(body_template)
+            footer = render_section(footer_template)
             if not header or not body:
                 raise TelegramError("Rendered batch header and body must not be empty")
             return _RenderedAlert(header, body, footer, "\n")
-        text = template.format_map(context)
+        text = render_section(template)
         if not text:
             raise TelegramError("Rendered message is empty")
         return _RenderedAlert("", text, "", "\n\n")
