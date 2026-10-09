@@ -6,13 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY . /app
-RUN groupadd --gid 10001 logserver \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 logserver \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /app --shell /usr/sbin/nologin logserver \
     && mkdir -p /data \
     && chown logserver:logserver /data
 
 USER logserver
-EXPOSE 8080/tcp 5514/udp
+EXPOSE 8080/tcp 5514/udp 5514/tcp 6514/tcp
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=2)"]
 CMD ["python", "-m", "logserver"]

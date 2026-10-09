@@ -1,20 +1,21 @@
 # MikroTik LogServer
 
-A dependency-free Python log collector for MikroTik RouterOS. It accepts native
-UDP syslog and JSON over HTTP, stores normalized events in SQLite, and serves a
-live searchable web console.
+A dependency-free Python log collector for MikroTik RouterOS. It accepts UDP
+syslog plus CEF over TCP or TLS, as well as JSON over HTTP, stores normalized
+events in SQLite, and serves a live searchable web console.
 
-## Why there are two listening ports
+## Listening ports
 
 RouterOS's built-in remote logging action sends **syslog**, not HTTP requests.
-The service therefore listens on:
+The service listens on all of these transports simultaneously:
 
 - `8080/tcp` — web UI, HTTP ingestion API, and live event stream
-- `5514/udp` — native RouterOS/syslog ingestion
+- `5514/udp` — native RouterOS syslog or CEF ingestion
+- `5514/tcp` — newline-delimited CEF ingestion
+- `6514/tcp` — newline-delimited CEF over TLS
 
-Both transports write to the same SQLite database and appear immediately in the
-same browser view. The HTTP endpoint is available for scripts, webhooks, or other
-services, while UDP syslog is the direct RouterOS integration.
+All transports write to the same SQLite database and appear immediately in the
+same browser view. Different routers can use different transports concurrently.
 
 ## Start it
 
@@ -35,11 +36,18 @@ Configuration can be supplied through environment variables:
 | `LOGSERVER_HTTP_PORT` | `8080` | HTTP port |
 | `LOGSERVER_SYSLOG_HOST` | `0.0.0.0` | UDP syslog bind address |
 | `LOGSERVER_SYSLOG_PORT` | `5514` | UDP syslog port |
+| `LOGSERVER_SYSLOG_TCP_PORT` | `5514` | TCP CEF port |
+| `LOGSERVER_SYSLOG_TLS_PORT` | `6514` | TLS CEF port |
+| `LOGSERVER_TLS_CERTFILE` | unset | TLS certificate path |
+| `LOGSERVER_TLS_KEYFILE` | unset | TLS private-key path |
+| `LOGSERVER_TLS_AUTO_GENERATE` | `false` | Generate a self-signed certificate when both paths do not exist |
+| `LOGSERVER_MAX_SYSLOG_BYTES` | `262144` | Maximum framed CEF event size |
 | `LOGSERVER_INGEST_TOKEN` | unset | Optional HTTP write token |
 | `LOGSERVER_MAX_BODY_BYTES` | `1048576` | Maximum HTTP request size |
 
 Equivalent command-line options are shown by `python3 -m logserver --help`.
-Use `--no-syslog` when only the HTTP service is wanted.
+Use `--no-udp`, `--no-tcp`, or `--no-tls` to disable individual listeners.
+`--no-syslog` remains an alias for `--no-udp`.
 
 ### Docker Compose
 
@@ -56,6 +64,12 @@ external `logserver_log-data` volume keeps the SQLite database across container
 updates and Compose teardown. It is not removed by `docker compose down
 --volumes`. Deleting it requires the explicit destructive command `docker
 volume rm logserver_log-data` and permanently removes the containerized database.
+
+Compose enables all three RouterOS transports. On its first start, it generates
+a self-signed TLS certificate in `/data/tls`; the certificate and private key
+persist in the external data volume. Custom certificate paths can instead be
+provided through `LOGSERVER_TLS_CERTFILE` and `LOGSERVER_TLS_KEYFILE` and mounted
+into the container.
 
 #### Updating and deploying source changes
 
@@ -83,7 +97,12 @@ pre-Docker snapshot and should not be copied over the volume during updates.
 ## Configure RouterOS
 
 Replace `192.0.2.10` with the LogServer machine's LAN address. In a RouterOS
-terminal, create one remote action and direct the standard severity topics to it:
+terminal, choose one transport for that router and direct the standard severity
+topics to its action. Different routers may use different transports at the same
+time. Do not configure several transports for the same rules unless duplicate
+entries are intentional.
+
+### UDP syslog
 
 ```routeros
 /system logging action add name=logserver target=remote remote=192.0.2.10 remote-port=5514 remote-log-format=syslog syslog-time-format=bsd-syslog syslog-facility=local0 add-topics-string=yes
@@ -109,6 +128,43 @@ carry RouterOS topic names. For an existing action, enable it with:
 ```routeros
 /system logging action set [find where name=logserver] add-topics-string=yes
 ```
+
+### Reliable TCP CEF
+
+RouterOS 7.18 or newer can queue up to 1,000 entries in memory while the TCP
+connection or networking is unavailable. This covers RouterOS entries produced
+after its logging subsystem starts but before networking finishes initializing.
+The queue is volatile and is lost if the router reboots again before delivery.
+
+```routeros
+/system logging action add name=logservertcp target=remote remote=192.0.2.10 remote-port=5514 remote-protocol=tcp remote-log-format=cef cef-event-delimiter="\r\n" syslog-time-format=iso8601
+/system logging add topics=info action=logservertcp
+/system logging add topics=warning action=logservertcp
+/system logging add topics=error action=logservertcp
+/system logging add topics=critical action=logservertcp
+```
+
+CEF carries the router identity, model, RouterOS version, topics, severity, and
+structured event fields. LogServer preserves these fields in record metadata.
+
+### TLS CEF
+
+TLS uses the same CEF framing and in-memory recovery behavior on port 6514:
+
+```routeros
+/system logging action add name=logservertls target=remote remote=192.0.2.10 remote-port=6514 remote-protocol=tls remote-log-format=cef cef-event-delimiter="\r\n" syslog-time-format=iso8601 check-certificate=no
+/system logging add topics=info action=logservertls
+/system logging add topics=warning action=logservertls
+/system logging add topics=error action=logservertls
+/system logging add topics=critical action=logservertls
+```
+
+`check-certificate=no` encrypts the connection but does not authenticate the
+server. For authentication, copy `/data/tls/server.crt` from the container,
+import and trust it on the router, then enable `check-certificate=yes`; or use a
+certificate issued by a CA the router already trusts.
+
+Permit `5514/udp`, `5514/tcp`, and `6514/tcp` only from trusted router networks.
 
 ## HTTP ingestion API
 

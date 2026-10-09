@@ -5,11 +5,16 @@ services:
     ports:
       - "8080:8080/tcp"
       - "5514:5514/udp"
+      - "5514:5514/tcp"
+      - "6514:6514/tcp"
     volumes:
       - log-data:/data
     environment:
       # Export this variable before starting Compose when HTTP writes need protection.
       LOGSERVER_INGEST_TOKEN: "${LOGSERVER_INGEST_TOKEN:-}"
+      LOGSERVER_TLS_CERTFILE: "${LOGSERVER_TLS_CERTFILE:-/data/tls/server.crt}"
+      LOGSERVER_TLS_KEYFILE: "${LOGSERVER_TLS_KEYFILE:-/data/tls/server.key}"
+      LOGSERVER_TLS_AUTO_GENERATE: "${LOGSERVER_TLS_AUTO_GENERATE:-true}"
     stop_grace_period: 10s
     logging:
       driver: json-file
