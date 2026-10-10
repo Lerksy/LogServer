@@ -5,6 +5,7 @@ import json
 import mimetypes
 import queue
 import re
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +39,7 @@ STATIC_FILES = {
 }
 _INVALID_JSON = object()
 _RULE_PATH = re.compile(r"^/api/admin/rules/(\d+)$")
+_MAX_STREAMS_PER_CLIENT = 2
 
 
 class LogHTTPServer(ThreadingHTTPServer):
@@ -49,6 +51,24 @@ class LogHTTPServer(ThreadingHTTPServer):
         self.log_service = service
         self.settings = settings
         self.alert_repository = AlertRepository(service.database.path)
+        self._stream_lock = threading.Lock()
+        self._stream_counts: dict[str, int] = {}
+
+    def acquire_stream(self, client: str) -> bool:
+        with self._stream_lock:
+            count = self._stream_counts.get(client, 0)
+            if count >= _MAX_STREAMS_PER_CLIENT:
+                return False
+            self._stream_counts[client] = count + 1
+            return True
+
+    def release_stream(self, client: str) -> None:
+        with self._stream_lock:
+            count = self._stream_counts.get(client, 0)
+            if count <= 1:
+                self._stream_counts.pop(client, None)
+            else:
+                self._stream_counts[client] = count - 1
 
 
 class LogRequestHandler(BaseHTTPRequestHandler):
@@ -233,13 +253,21 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _stream_logs(self) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
+        client = self.client_address[0]
+        if not self.server.acquire_stream(client):
+            self._error(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "stream_limit",
+                "Too many live log streams are open from this client",
+            )
+            return
         try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
             with self.server.log_service.broker.subscribe() as subscriber:
@@ -251,8 +279,10 @@ class LogRequestHandler(BaseHTTPRequestHandler):
                     except queue.Empty:
                         self.wfile.write(b": heartbeat\n\n")
                     self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+        except OSError:
             return
+        finally:
+            self.server.release_stream(client)
 
     def _authorized(self) -> bool:
         expected = self.server.settings.ingest_token

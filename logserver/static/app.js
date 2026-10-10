@@ -14,6 +14,7 @@ const elements = {
   connection: document.querySelector("#connection"),
   connectionText: document.querySelector("#connectionText"),
   newLogs: document.querySelector("#newLogs"),
+  manage: document.querySelector(".manage-link"),
 };
 
 const STORAGE_KEY = "logserver.preferences.v1";
@@ -21,6 +22,7 @@ const VALID_SEVERITIES = ["emergency", "alert", "critical", "error", "warning", 
 const VALID_PAGE_SIZES = [50, 100, 250, 500];
 const preferences = loadPreferences();
 const customSelects = new Set();
+let stream = null;
 
 const state = {
   logs: [],
@@ -339,23 +341,57 @@ document.addEventListener("pointerdown", (event) => {
   }
 });
 
-const stream = new EventSource("/api/stream");
-stream.onopen = () => {
-  elements.connection.className = "connection online";
-  elements.connectionText.textContent = "Live";
-};
-stream.onerror = () => {
-  elements.connection.className = "connection offline";
-  elements.connectionText.textContent = "Reconnecting";
-};
-stream.addEventListener("log", () => {
-  if (state.paused) {
-    state.pending += 1;
-    elements.newLogs.textContent = `${state.pending.toLocaleString()} new ${state.pending === 1 ? "log" : "logs"}`;
-    elements.newLogs.hidden = false;
+function closeStream({ inactive = false } = {}) {
+  const current = stream;
+  stream = null;
+  if (current) current.close();
+  if (inactive) {
+    elements.connection.className = "connection";
+    elements.connectionText.textContent = "Inactive";
+  }
+}
+
+function connectStream() {
+  if (document.hidden || stream) return;
+  const source = new EventSource("/api/stream");
+  stream = source;
+  source.onopen = () => {
+    if (stream !== source) return;
+    elements.connection.className = "connection online";
+    elements.connectionText.textContent = "Live";
+  };
+  source.onerror = () => {
+    if (stream !== source) return;
+    elements.connection.className = "connection offline";
+    elements.connectionText.textContent = "Reconnecting";
+  };
+  source.addEventListener("log", () => {
+    if (stream !== source) return;
+    if (state.paused) {
+      state.pending += 1;
+      elements.newLogs.textContent = `${state.pending.toLocaleString()} new ${state.pending === 1 ? "log" : "logs"}`;
+      elements.newLogs.hidden = false;
+    } else {
+      scheduleRefresh();
+    }
+  });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    closeStream({ inactive: true });
   } else {
-    scheduleRefresh();
+    connectStream();
+    if (!state.paused) loadLogs();
   }
 });
+window.addEventListener("pagehide", () => closeStream());
+elements.manage.addEventListener("click", () => {
+  closeStream({ inactive: true });
+  window.setTimeout(() => {
+    if (!document.hidden) connectStream();
+  }, 1000);
+});
 
+connectStream();
 loadLogs();

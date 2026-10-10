@@ -55,6 +55,21 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertIn(b"Alert Management", management)
         self.assertIn(b"IP intelligence services", management)
 
+    def test_live_streams_are_limited_per_client(self):
+        streams = []
+        try:
+            for _ in range(2):
+                response = urllib.request.urlopen(self.base_url + "/api/stream", timeout=2)
+                self.assertEqual(response.readline(), b": connected\n")
+                streams.append(response)
+
+            status, body = self.request("/api/stream")
+            self.assertEqual(status, 429)
+            self.assertEqual(body["error"]["code"], "stream_limit")
+        finally:
+            for response in streams:
+                response.close()
+
     def test_ingest_requires_token(self):
         status, body = self.request("/api/logs", method="POST", payload={"message": "denied"})
         self.assertEqual(status, 401)
