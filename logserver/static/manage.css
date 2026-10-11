@@ -1,5 +1,6 @@
 .back-link { color: #9aaba5; font-size: 12px; text-decoration: none; text-transform: uppercase; letter-spacing: .08em; }
 .back-link:hover { color: var(--green); }
+.manage-nav { display: flex; align-items: center; gap: 18px; }
 .manage-main { display: grid; gap: 20px; }
 .settings-card, .rules-sidebar, .rule-editor { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); box-shadow: 0 16px 42px rgba(0,0,0,.14); }
 .settings-card { padding: 20px; }

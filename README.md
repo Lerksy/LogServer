@@ -312,6 +312,19 @@ Enabling enrichment sends the captured public IP address to the selected
 provider. Geolocation is approximate and should not be treated as a precise
 physical location.
 
+Open <http://localhost:8080/ip-intel> (or use **IP intelligence** in the page
+navigation) to browse the consolidated enrichment cache. Provider and language
+variants are combined into one row per IP. The page can search location,
+network-owner, and abuse fields; filter addresses with reports, without reports,
+or unavailable abuse data; and copy a ready-to-run RouterOS command such as:
+
+```routeros
+/ip firewall address-list add list="logserver-abuse" address=203.0.113.10 comment="LogServer — 2 abuse reports: Port Scan"
+```
+
+The address-list name is controlled by a field at the top of the page and is
+saved in that browser. Values are quoted and escaped before being copied.
+
 Example body:
 
 ```text

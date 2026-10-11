@@ -20,6 +20,7 @@ from .alerts import (
     validate_telegram_settings,
 )
 from .config import Settings
+from .ipcache import ABUSE_FILTERS, IPCacheRepository
 from .models import SEVERITIES_BY_URGENCY
 from .search import SearchSyntaxError
 from .service import LogService
@@ -36,6 +37,10 @@ STATIC_FILES = {
     "/manage.js": "manage.js",
     "/styles.css": "styles.css",
     "/manage.css": "manage.css",
+    "/ip-intel": "ip-intel.html",
+    "/ip-intel.html": "ip-intel.html",
+    "/ip-intel.js": "ip-intel.js",
+    "/ip-intel.css": "ip-intel.css",
 }
 _INVALID_JSON = object()
 _RULE_PATH = re.compile(r"^/api/admin/rules/(\d+)$")
@@ -51,6 +56,7 @@ class LogHTTPServer(ThreadingHTTPServer):
         self.log_service = service
         self.settings = settings
         self.alert_repository = AlertRepository(service.database.path)
+        self.ip_cache_repository = IPCacheRepository(service.database.path)
         self._stream_lock = threading.Lock()
         self._stream_counts: dict[str, int] = {}
 
@@ -90,6 +96,8 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/admin/rules":
             rules = [rule.to_dict() for rule in self.server.alert_repository.list_rules()]
             self._json(HTTPStatus.OK, {"items": rules})
+        elif parsed.path == "/api/admin/ip-intel":
+            self._list_ip_intel(parse_qs(parsed.query))
         elif parsed.path in STATIC_FILES:
             self._static(STATIC_FILES[parsed.path])
         else:
@@ -251,6 +259,39 @@ class LogRequestHandler(BaseHTTPRequestHandler):
                 "next_before_id": items[-1]["id"] if has_more and items else None,
             },
         )
+
+    def _list_ip_intel(self, params: dict[str, list[str]]) -> None:
+        query = params.get("q", [""])[0].strip()
+        abuse = params.get("abuse", ["all"])[0]
+        try:
+            limit = int(params.get("limit", ["100"])[0])
+            offset = int(params.get("offset", ["0"])[0])
+            if limit < 1 or limit > 500 or offset < 0:
+                raise ValueError
+        except ValueError:
+            self._error(
+                HTTPStatus.BAD_REQUEST,
+                "pagination",
+                "limit must be 1-500 and offset must be zero or greater",
+            )
+            return
+        if len(query) > 200:
+            self._error(HTTPStatus.BAD_REQUEST, "query", "q must be at most 200 characters")
+            return
+        if abuse not in ABUSE_FILTERS:
+            self._error(
+                HTTPStatus.BAD_REQUEST,
+                "abuse_filter",
+                f"abuse must be one of: {', '.join(sorted(ABUSE_FILTERS))}",
+            )
+            return
+        result = self.server.ip_cache_repository.list_addresses(
+            query=query,
+            abuse=abuse,
+            limit=limit,
+            offset=offset,
+        )
+        self._json(HTTPStatus.OK, result)
 
     def _stream_logs(self) -> None:
         client = self.client_address[0]

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>IP Intelligence · LogServer</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/ip-intel.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div><h1>IP Intelligence</h1><p>Enrichment cache</p></div>
+      </div>
+      <nav class="page-nav" aria-label="LogServer pages">
+        <a href="/manage">Alert rules</a>
+        <a href="/">Live logs</a>
+      </nav>
+    </header>
+
+    <main class="intel-main">
+      <section class="control-card">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Resolved addresses</span>
+            <h2>Cached IP intelligence</h2>
+            <p>Review enriched addresses and prepare RouterOS address-list commands.</p>
+          </div>
+          <span class="cache-total"><strong id="totalCount">0</strong> unique IPs</span>
+        </div>
+
+        <div class="controls-grid">
+          <label class="intel-field">
+            <span>MikroTik address list</span>
+            <input id="addressList" maxlength="64" autocomplete="off" value="logserver-abuse"
+                   placeholder="logserver-abuse">
+            <small>Used by every “Copy command” button and saved in this browser.</small>
+          </label>
+          <label class="intel-field">
+            <span>Search cache</span>
+            <input id="cacheSearch" type="search" maxlength="200" autocomplete="off"
+                   placeholder="IP, country, city, company, or abuse type">
+            <small>Searches consolidated entries from every configured provider.</small>
+          </label>
+        </div>
+
+        <fieldset class="abuse-filters">
+          <legend>Abuse reports</legend>
+          <label><input type="radio" name="abuse" value="all" checked><span>All <b id="allCount">0</b></span></label>
+          <label><input type="radio" name="abuse" value="reported"><span>Reported <b id="reportedCount">0</b></span></label>
+          <label><input type="radio" name="abuse" value="clean"><span>No reports <b id="cleanCount">0</b></span></label>
+          <label><input type="radio" name="abuse" value="unavailable"><span>Unavailable <b id="unavailableCount">0</b></span></label>
+        </fieldset>
+        <div id="pageError" class="page-error" hidden></div>
+      </section>
+
+      <section class="cache-panel">
+        <div class="cache-toolbar">
+          <div><strong id="filteredCount">0</strong> matching addresses</div>
+          <div class="legend"><span class="legend-dot reported"></span>Reported abuse <span class="legend-dot stale"></span>Expired cache</div>
+        </div>
+        <div class="intel-table-wrap">
+          <table class="intel-table">
+            <thead>
+              <tr>
+                <th>IP address</th>
+                <th>Location</th>
+                <th>Network owner</th>
+                <th>Abuse intelligence</th>
+                <th>Cache</th>
+                <th><span class="visually-hidden">Action</span></th>
+              </tr>
+            </thead>
+            <tbody id="ipRows"></tbody>
+          </table>
+          <div id="emptyState" class="intel-empty" hidden>
+            <div>⌁</div>
+            <h2>No matching addresses</h2>
+            <p>Try a different search or abuse-report filter.</p>
+          </div>
+        </div>
+        <button id="loadMore" class="load-more" type="button" hidden>Load more addresses</button>
+      </section>
+    </main>
+
+    <template id="ipRowTemplate">
+      <tr>
+        <td><code class="ip-address"></code></td>
+        <td><div class="location-primary"></div><small class="location-city"></small></td>
+        <td><div class="company"></div></td>
+        <td>
+          <span class="abuse-badge"></span>
+          <div class="abuse-summary"></div>
+          <small class="abuse-date"></small>
+        </td>
+        <td>
+          <div class="provider-list"></div>
+          <small class="cache-date"></small>
+          <small class="cache-error"></small>
+        </td>
+        <td class="copy-cell"><button class="copy-command" type="button">Copy command</button></td>
+      </tr>
+    </template>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script src="/ip-intel.js" defer></script>
+  </body>
+</html>

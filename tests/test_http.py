@@ -1,9 +1,11 @@
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 
 from logserver.config import Settings
@@ -18,6 +20,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         database = LogDatabase(Path(self.tempdir.name) / "logs.db")
         database.initialize()
+        self.database = database
         service = LogService(database, EventBroker())
         settings = Settings(database_path=database.path, ingest_token="secret")
         self.server = LogHTTPServer(("127.0.0.1", 0), service, settings)
@@ -54,6 +57,34 @@ class HTTPIntegrationTests(unittest.TestCase):
         management = response.read()
         self.assertIn(b"Alert Management", management)
         self.assertIn(b"IP intelligence services", management)
+        response = urllib.request.urlopen(self.base_url + "/ip-intel", timeout=2)
+        intelligence = response.read()
+        self.assertIn(b"Cached IP intelligence", intelligence)
+        self.assertIn(b"MikroTik address list", intelligence)
+
+    def test_ip_intelligence_cache_api(self):
+        with closing(sqlite3.connect(self.database.path)) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO ip_intel_cache (
+                    provider, ip, country, city, company, abuse_count, abuse_summary,
+                    abuse_last_seen, fetched_at, expires_at, error
+                ) VALUES (
+                    '2ip:en', '8.8.8.8', 'United States', 'Chicago', 'GOOGLE',
+                    '2', 'Port Scan', '2026-01-01',
+                    '2026-10-11T00:00:00.000Z', '2099-01-01T00:00:00.000Z', NULL
+                )
+                """
+            )
+
+        status, body = self.request("/api/admin/ip-intel?abuse=reported")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["counts"]["reported"], 1)
+        self.assertEqual(body["items"][0]["ip"], "8.8.8.8")
+
+        status, body = self.request("/api/admin/ip-intel?abuse=invalid")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "abuse_filter")
 
     def test_live_streams_are_limited_per_client(self):
         streams = []
