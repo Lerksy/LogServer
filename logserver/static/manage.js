@@ -267,6 +267,17 @@ ui.ruleForm.addEventListener("submit", async (event) => {
   } catch (error) { toast(error.message, true); }
 });
 
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key.toLowerCase() === "s"
+    && (event.ctrlKey || event.metaKey)
+    && !event.altKey
+  ) {
+    event.preventDefault();
+    if (!event.repeat) ui.ruleForm.requestSubmit();
+  }
+});
+
 ui.deleteRule.addEventListener("click", async () => {
   const id = ui.ruleId.value;
   if (!id || !confirm("Delete this alert rule?")) return;
