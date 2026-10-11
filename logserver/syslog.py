@@ -127,7 +127,7 @@ def parse_cef(
     now: datetime | None = None,
     transport: str = "cef-tcp",
 ) -> LogInput:
-    raw = data.decode("utf-8", errors="replace").strip("\x00\r\n")
+    raw = _strip_cef_delimiters(data.decode("utf-8", errors="replace"))
     cef_start = raw.find("CEF:")
     if cef_start < 0:
         raise ValueError("CEF header is missing")
@@ -170,6 +170,16 @@ def parse_cef(
         transport=transport,
         metadata=metadata,
     )
+
+
+def _strip_cef_delimiters(value: str) -> str:
+    value = value.strip("\x00\r\n")
+    # RouterOS can transmit cef-event-delimiter="\r\n" as literal escaped
+    # characters at the beginning of the next frame. It is framing, not part
+    # of the timestamp prefix.
+    while value.startswith("\\r\\n"):
+        value = value[4:].lstrip("\x00\r\n")
+    return value
 
 
 def _split_cef_header(value: str) -> list[str]:

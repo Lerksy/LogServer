@@ -146,6 +146,9 @@ The queue is volatile and is lost if the router reboots again before delivery.
 
 CEF carries the router identity, model, RouterOS version, topics, severity, and
 structured event fields. LogServer preserves these fields in record metadata.
+Some RouterOS releases prefix subsequent CEF frames with the literal escaped
+delimiter `\\r\\n`; LogServer removes that framing before parsing the ISO 8601
+event timestamp.
 
 ### TLS CEF
 
@@ -248,7 +251,12 @@ list. Every unique destination receives the same rendered batch through the
 configured bot; duplicate entries and a repeated primary chat ID are sent only
 once. The bot must already have permission to post in every listed chat. A
 failure for one destination does not prevent attempts to the remaining chats,
-and the rule reports which destination failed.
+and the rule reports which destination failed. Failed deliveries are stored in
+SQLite before they are sent, so retry state survives a service or container
+restart. Only failed destinations are retried, after 5 seconds, 15 seconds,
+1 minute, 5 minutes, 15 minutes, 1 hour, 6 hours, and 24 hours. After the
+initial attempt and all eight retries fail, the delivery is discarded and the
+final error remains visible on the rule.
 
 For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
 to the template. Numbered captures are available as `{group1}`, `{group2}`, and

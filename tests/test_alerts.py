@@ -428,6 +428,78 @@ class AlertTests(unittest.TestCase):
         saved = self.repository.get_rule(rule.id)
         self.assertEqual(saved.sent_count, 0)
         self.assertIn("-1002: chat not found", saved.last_error)
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 1)
+
+    def test_failed_delivery_is_retried_from_persistent_outbox(self):
+        first_attempts = []
+
+        def failing_sender(settings, text, mode):
+            first_attempts.append((settings.chat_id, text, mode))
+            raise RuntimeError("temporary network failure")
+
+        first_dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=failing_sender,
+            retry_delays=(0,),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=0)))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        first_dispatcher.process(record)
+
+        self.assertEqual(len(first_attempts), 1)
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 1)
+        self.assertIn("retry 1/1 scheduled", self.repository.get_rule(rule.id).last_error)
+
+        retried = []
+        restarted_dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: retried.append((settings.chat_id, text, mode)),
+            retry_delays=(0,),
+        )
+        restarted_dispatcher._retry_due()
+
+        self.assertEqual(retried, first_attempts)
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 0)
+        saved = self.repository.get_rule(rule.id)
+        self.assertEqual(saved.sent_count, 1)
+        self.assertIsNone(saved.last_error)
+
+    def test_retry_targets_only_destinations_that_failed(self):
+        attempted = []
+        failed_once = False
+
+        def sender(settings, text, mode):
+            nonlocal failed_once
+            attempted.append(settings.chat_id)
+            if settings.chat_id == "-1002" and not failed_once:
+                failed_once = True
+                raise RuntimeError("temporary failure")
+
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=sender,
+            retry_delays=(0,),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            additional_chat_ids=["-1002", "-1003"],
+        )))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+        dispatcher._retry_due()
+
+        self.assertEqual(attempted, ["-1001", "-1002", "-1003", "-1002"])
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 0)
+        self.assertEqual(self.repository.get_rule(rule.id).sent_count, 1)
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))

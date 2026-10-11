@@ -77,6 +77,22 @@ class LogDatabase:
                 );
                 CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
 
+                CREATE TABLE IF NOT EXISTS alert_delivery_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    parse_mode TEXT NOT NULL DEFAULT '',
+                    pending_chat_ids TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_due
+                    ON alert_delivery_outbox(next_attempt_at, id);
+                CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_rule
+                    ON alert_delivery_outbox(rule_id);
+
                 CREATE TABLE IF NOT EXISTS ip_lookup_cache (
                     ip TEXT PRIMARY KEY,
                     country TEXT NOT NULL DEFAULT '',

@@ -124,9 +124,14 @@ class DatabaseTests(unittest.TestCase):
             service_settings_exist = connection.execute(
                 "SELECT count(*) FROM ip_service_settings WHERE id = 1"
             ).fetchone()[0]
+            delivery_outbox_exists = connection.execute(
+                "SELECT count(*) FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'alert_delivery_outbox'"
+            ).fetchone()[0]
         self.assertEqual(cache_exists, 1)
         self.assertEqual(intel_cache_exists, 1)
         self.assertEqual(service_settings_exist, 1)
+        self.assertEqual(delivery_outbox_exists, 1)
 
 
 if __name__ == "__main__":

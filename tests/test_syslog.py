@@ -84,6 +84,18 @@ class SyslogParserTests(unittest.TestCase):
         self.assertEqual(item.message, "value=one and slash\\two")
         self.assertEqual(item.transport, "cef-tls")
 
+    def test_cef_iso_timestamp_after_literal_routeros_delimiter(self):
+        item = parse_cef(
+            b"\\r\\n2026-10-11T15:33:46.356+03:00 RouterOS "
+            b"CEF:0|MikroTik|hAP ac^2|7.23.5|16|dns,debug|Low|"
+            b"dvchost=router msg=query received\r\n",
+            "192.0.2.8",
+        )
+
+        self.assertEqual(item.event_at, "2026-10-11T12:33:46.356Z")
+        self.assertEqual(item.raw[:4], "2026")
+        self.assertEqual(item.message, "query received")
+
     def test_udp_cef_is_detected(self):
         item = parse_remote_message(
             b"Oct  2 17:36:35 router CEF:0|MikroTik|RB5009|7.25|1|system,info|Low|"
