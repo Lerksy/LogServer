@@ -10,6 +10,26 @@
 .eyebrow { color: var(--green); font-size: 9px; text-transform: uppercase; letter-spacing: .13em; }
 .cache-total { flex: 0 0 auto; padding: 8px 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; background: #0c1513; font-size: 11px; }
 .cache-total strong { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+.manual-lookup { margin: 0 0 20px; padding: 16px; border: 1px solid #29463a; border-radius: 9px; background: linear-gradient(120deg, rgba(84,224,154,.045), rgba(12,21,19,.72)); }
+.lookup-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
+.lookup-heading h3 { margin: 3px 0 0; color: #d5dfdb; font-size: 14px; }
+.lookup-status { min-height: 16px; color: var(--green); font-size: 10px; text-align: right; }
+.lookup-status.error { color: var(--red); }
+.lookup-grid { display: grid; grid-template-columns: minmax(210px, 1fr) auto auto auto; gap: 12px; align-items: end; }
+.lookup-address { min-width: 0; }
+.choice-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.choice-group legend { margin-bottom: 6px; color: #a6b5b0; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em; }
+.choice-pills { height: 42px; display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: #0c1513; }
+.choice-pills label { position: relative; display: flex; cursor: pointer; }
+.choice-pills input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-pills span { min-width: 68px; height: 34px; padding: 0 10px; display: grid; place-items: center; color: #93a49e; border-radius: 5px; font-size: 11px; }
+.choice-pills.compact span { min-width: 36px; padding-inline: 7px; }
+.choice-pills input:checked + span { color: #062317; background: var(--green); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.choice-pills input:focus-visible + span { outline: 2px solid #8df5bd; outline-offset: 1px; }
+.lookup-button { height: 42px; padding: 0 15px; color: #062317; border: 1px solid var(--green); border-radius: 8px; background: var(--green); cursor: pointer; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.lookup-button:hover { filter: brightness(1.08); }
+.lookup-button:disabled { cursor: wait; filter: saturate(.35); opacity: .7; }
+.lookup-note { margin: 9px 0 0; color: var(--muted); font-size: 10px; }
 .controls-grid { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(300px, 1.3fr); gap: 16px; }
 .intel-field { display: grid; gap: 6px; }
 .intel-field > span, .abuse-filters legend { color: #a6b5b0; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em; }
@@ -67,6 +87,12 @@
 @media (max-width: 720px) {
   .intel-main { padding-inline: 12px; }
   .controls-grid { grid-template-columns: 1fr; }
+  .lookup-grid { grid-template-columns: 1fr; }
+  .choice-pills label { flex: 1; }
+  .choice-pills span { width: 100%; }
+  .lookup-button { width: 100%; }
+  .lookup-heading { align-items: stretch; flex-direction: column; }
+  .lookup-status { text-align: left; }
   .section-heading { align-items: stretch; flex-direction: column; }
   .cache-total { align-self: flex-start; }
   .cache-toolbar { align-items: flex-start; flex-direction: column; padding-block: 10px; }

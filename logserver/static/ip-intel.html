@@ -31,6 +31,41 @@
           <span class="cache-total"><strong id="totalCount">0</strong> unique IPs</span>
         </div>
 
+        <form id="manualLookup" class="manual-lookup">
+          <div class="lookup-heading">
+            <div>
+              <span class="eyebrow">Manual lookup</span>
+              <h3>Resolve an IP address</h3>
+            </div>
+            <span id="lookupStatus" class="lookup-status" aria-live="polite"></span>
+          </div>
+          <div class="lookup-grid">
+            <label class="intel-field lookup-address">
+              <span>IPv4 or IPv6 address</span>
+              <input id="lookupIp" required maxlength="64" autocomplete="off" spellcheck="false"
+                     placeholder="8.8.8.8">
+            </label>
+            <fieldset class="choice-group">
+              <legend>Provider</legend>
+              <div class="choice-pills">
+                <label><input type="radio" name="lookupProvider" value="ipapi" checked><span>ipapi.co</span></label>
+                <label><input type="radio" name="lookupProvider" value="2ip"><span>2ip.io</span></label>
+              </div>
+            </fieldset>
+            <fieldset id="lookupLanguage" class="choice-group" hidden>
+              <legend>2ip language</legend>
+              <div class="choice-pills compact">
+                <label><input type="radio" name="lookupLanguage" value="en" checked><span>EN</span></label>
+                <label><input type="radio" name="lookupLanguage" value="ua"><span>UA</span></label>
+                <label><input type="radio" name="lookupLanguage" value="de"><span>DE</span></label>
+                <label><input type="radio" name="lookupLanguage" value="ru"><span>RU</span></label>
+              </div>
+            </fieldset>
+            <button id="lookupButton" class="lookup-button" type="submit">Get IP info</button>
+          </div>
+          <p class="lookup-note">Fresh cached data is reused. Missing or expired data is requested from the selected service.</p>
+        </form>
+
         <div class="controls-grid">
           <label class="intel-field">
             <span>MikroTik address list</span>

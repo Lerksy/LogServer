@@ -54,6 +54,14 @@ class IPCacheRepository:
             "next_offset": offset + len(page) if offset + len(page) < filtered else None,
         }
 
+    def get_address(self, ip: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM ip_intel_cache WHERE ip = ? ORDER BY fetched_at DESC",
+                (ip,),
+            ).fetchall()
+        return self._merge_ip(rows) if rows else None
+
     @staticmethod
     def _group_by_ip(rows: list[sqlite3.Row]) -> list[list[sqlite3.Row]]:
         groups: dict[str, list[sqlite3.Row]] = {}

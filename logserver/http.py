@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import mimetypes
 import queue
@@ -21,6 +22,7 @@ from .alerts import (
 )
 from .config import Settings
 from .ipcache import ABUSE_FILTERS, IPCacheRepository
+from .ipintel import IPEnricher, IP_PROVIDERS, TWOIP_LANGUAGES
 from .models import SEVERITIES_BY_URGENCY
 from .search import SearchSyntaxError
 from .service import LogService
@@ -57,6 +59,10 @@ class LogHTTPServer(ThreadingHTTPServer):
         self.settings = settings
         self.alert_repository = AlertRepository(service.database.path)
         self.ip_cache_repository = IPCacheRepository(service.database.path)
+        self.ip_enricher = IPEnricher(
+            service.database.path,
+            twoip_token_getter=lambda: self.alert_repository.get_ip_service_settings().twoip_token,
+        )
         self._stream_lock = threading.Lock()
         self._stream_counts: dict[str, int] = {}
 
@@ -119,6 +125,8 @@ class LogRequestHandler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", str(exc))
                 return
             self._json(HTTPStatus.CREATED, rule.to_dict())
+        elif parsed.path == "/api/admin/ip-intel/lookup":
+            self._lookup_ip_intel()
         else:
             self._error(HTTPStatus.NOT_FOUND, "not_found", "Resource not found")
 
@@ -292,6 +300,43 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             offset=offset,
         )
         self._json(HTTPStatus.OK, result)
+
+    def _lookup_ip_intel(self) -> None:
+        payload = self._read_json()
+        if payload is _INVALID_JSON:
+            return
+        if not isinstance(payload, dict):
+            self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", "request must be a JSON object")
+            return
+
+        value = payload.get("ip", "")
+        provider = payload.get("provider", "ipapi")
+        language = payload.get("language", "en")
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 64:
+            self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", "ip must be a valid IPv4 or IPv6 address")
+            return
+        try:
+            ip = ipaddress.ip_address(value.strip()).compressed
+        except ValueError:
+            self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", "ip must be a valid IPv4 or IPv6 address")
+            return
+        if not isinstance(provider, str) or provider not in IP_PROVIDERS:
+            self._error(HTTPStatus.UNPROCESSABLE_ENTITY, "validation", "provider must be 'ipapi' or '2ip'")
+            return
+        if not isinstance(language, str) or language not in TWOIP_LANGUAGES:
+            self._error(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "validation",
+                "language must be 'en', 'ua', 'de', or 'ru'",
+            )
+            return
+
+        self.server.ip_enricher.lookup(ip, provider, language)
+        item = self.server.ip_cache_repository.get_address(ip)
+        if item is None:
+            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "lookup", "IP lookup result was not cached")
+            return
+        self._json(HTTPStatus.OK, {"item": item})
 
     def _stream_logs(self) -> None:
         client = self.client_address[0]

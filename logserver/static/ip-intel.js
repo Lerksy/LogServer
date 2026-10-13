@@ -15,6 +15,11 @@ const ui = {
   cleanCount: document.querySelector("#cleanCount"),
   unavailableCount: document.querySelector("#unavailableCount"),
   filteredCount: document.querySelector("#filteredCount"),
+  manualLookup: document.querySelector("#manualLookup"),
+  lookupIp: document.querySelector("#lookupIp"),
+  lookupButton: document.querySelector("#lookupButton"),
+  lookupStatus: document.querySelector("#lookupStatus"),
+  lookupLanguage: document.querySelector("#lookupLanguage"),
 };
 
 const STORAGE_KEY = "logserver.ip-intel.address-list.v1";
@@ -173,6 +178,61 @@ function showToast(message, error = false) {
   showToast.timer = window.setTimeout(() => { ui.toast.hidden = true; }, 2600);
 }
 
+function checkedValue(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || "";
+}
+
+function updateLookupOptions() {
+  ui.lookupLanguage.hidden = checkedValue("lookupProvider") !== "2ip";
+}
+
+async function lookupAddress(event) {
+  event.preventDefault();
+  const ip = ui.lookupIp.value.trim();
+  if (!ip) {
+    ui.lookupIp.focus();
+    return;
+  }
+
+  ui.lookupButton.disabled = true;
+  ui.lookupButton.textContent = "Looking up…";
+  ui.lookupStatus.textContent = "Checking cache and provider";
+  ui.lookupStatus.classList.remove("error");
+  try {
+    const response = await fetch("/api/admin/ip-intel/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ip,
+        provider: checkedValue("lookupProvider"),
+        language: checkedValue("lookupLanguage") || "en",
+      }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error?.message || `Lookup failed (${response.status})`);
+
+    ui.lookupIp.value = body.item.ip;
+    ui.search.value = body.item.ip;
+    state.filter = "all";
+    document.querySelector('input[name="abuse"][value="all"]').checked = true;
+    await loadAddresses();
+    const failed = Boolean(body.item.error);
+    ui.lookupStatus.textContent = failed ? "Lookup saved with a provider error" : "Lookup complete";
+    ui.lookupStatus.classList.toggle("error", failed);
+    showToast(
+      failed ? `${body.item.ip}: ${body.item.error}` : `IP information loaded for ${body.item.ip}`,
+      failed,
+    );
+  } catch (error) {
+    ui.lookupStatus.textContent = error.message;
+    ui.lookupStatus.classList.add("error");
+    showToast(error.message, true);
+  } finally {
+    ui.lookupButton.disabled = false;
+    ui.lookupButton.textContent = "Get IP info";
+  }
+}
+
 ui.addressList.addEventListener("input", () => {
   try { localStorage.setItem(STORAGE_KEY, ui.addressList.value); } catch (_error) { /* ignored */ }
 });
@@ -188,5 +248,10 @@ for (const input of document.querySelectorAll('input[name="abuse"]')) {
   });
 }
 ui.loadMore.addEventListener("click", () => loadAddresses({ append: true }));
+ui.manualLookup.addEventListener("submit", lookupAddress);
+for (const input of document.querySelectorAll('input[name="lookupProvider"]')) {
+  input.addEventListener("change", updateLookupOptions);
+}
 
+updateLookupOptions();
 loadAddresses();

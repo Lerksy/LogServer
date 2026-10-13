@@ -15,6 +15,28 @@ from logserver.http import LogHTTPServer
 from logserver.service import LogService
 
 
+class FakeIPEnricher:
+    def __init__(self, database_path):
+        self.database_path = database_path
+        self.calls = []
+
+    def lookup(self, ip, provider="ipapi", language="en"):
+        self.calls.append((ip, provider, language))
+        cache_provider = f"2ip:{language}" if provider == "2ip" else provider
+        with closing(sqlite3.connect(self.database_path)) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO ip_intel_cache (
+                    provider, ip, country, city, company, abuse_count, abuse_summary,
+                    abuse_last_seen, fetched_at, expires_at, error
+                ) VALUES (?, ?, 'Germany', 'Frankfurt', 'Example Network', '0',
+                          'No reports', '', '2026-10-14T10:00:00.000Z',
+                          '2099-01-01T00:00:00.000Z', NULL)
+                """,
+                (cache_provider, ip),
+            )
+
+
 class HTTPIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -88,6 +110,32 @@ class HTTPIntegrationTests(unittest.TestCase):
         status, body = self.request("/api/admin/ip-intel?abuse=invalid")
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "abuse_filter")
+
+    def test_manual_ip_intelligence_lookup(self):
+        self.server.ip_enricher = FakeIPEnricher(self.database.path)
+
+        status, body = self.request(
+            "/api/admin/ip-intel/lookup",
+            method="POST",
+            payload={"ip": "2001:4860:4860::8888", "provider": "2ip", "language": "de"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["item"]["ip"], "2001:4860:4860::8888")
+        self.assertEqual(body["item"]["country"], "Germany")
+        self.assertEqual(body["item"]["providers"], ["2ip:de"])
+        self.assertEqual(
+            self.server.ip_enricher.calls,
+            [("2001:4860:4860::8888", "2ip", "de")],
+        )
+
+        status, body = self.request(
+            "/api/admin/ip-intel/lookup",
+            method="POST",
+            payload={"ip": "not-an-ip", "provider": "ipapi", "language": "en"},
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(body["error"]["code"], "validation")
+        self.assertEqual(len(self.server.ip_enricher.calls), 1)
 
     def test_live_streams_are_limited_per_client(self):
         streams = []
