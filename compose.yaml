@@ -16,6 +16,7 @@ services:
       LOGSERVER_TLS_KEYFILE: "${LOGSERVER_TLS_KEYFILE:-/data/tls/server.key}"
       LOGSERVER_TLS_AUTO_GENERATE: "${LOGSERVER_TLS_AUTO_GENERATE:-true}"
       LOGSERVER_TIMEZONE: "${LOGSERVER_TIMEZONE:-Europe/Kyiv}"
+      LOGSERVER_MAX_STREAMS_PER_CLIENT: "${LOGSERVER_MAX_STREAMS_PER_CLIENT:-20}"
     stop_grace_period: 10s
     logging:
       driver: json-file

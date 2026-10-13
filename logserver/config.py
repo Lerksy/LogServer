@@ -15,6 +15,13 @@ def _int_env(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    value = _int_env(name, default)
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _bool_env(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -47,6 +54,7 @@ class Settings:
     max_syslog_bytes: int = 262_144
     ingest_token: str | None = None
     max_body_bytes: int = 1_048_576
+    max_streams_per_client: int = 20
     timezone: str = "UTC"
 
     @classmethod
@@ -65,6 +73,7 @@ class Settings:
             max_syslog_bytes=_int_env("LOGSERVER_MAX_SYSLOG_BYTES", 262_144),
             ingest_token=os.getenv("LOGSERVER_INGEST_TOKEN") or None,
             max_body_bytes=_int_env("LOGSERVER_MAX_BODY_BYTES", 1_048_576),
+            max_streams_per_client=_positive_int_env("LOGSERVER_MAX_STREAMS_PER_CLIENT", 20),
             timezone=os.getenv("LOGSERVER_TIMEZONE", "UTC"),
         )
 

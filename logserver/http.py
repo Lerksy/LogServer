@@ -46,7 +46,6 @@ STATIC_FILES = {
 }
 _INVALID_JSON = object()
 _RULE_PATH = re.compile(r"^/api/admin/rules/(\d+)$")
-_MAX_STREAMS_PER_CLIENT = 2
 
 
 class LogHTTPServer(ThreadingHTTPServer):
@@ -69,7 +68,7 @@ class LogHTTPServer(ThreadingHTTPServer):
     def acquire_stream(self, client: str) -> bool:
         with self._stream_lock:
             count = self._stream_counts.get(client, 0)
-            if count >= _MAX_STREAMS_PER_CLIENT:
+            if count >= self.settings.max_streams_per_client:
                 return False
             self._stream_counts[client] = count + 1
             return True

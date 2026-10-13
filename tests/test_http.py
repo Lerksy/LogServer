@@ -44,7 +44,11 @@ class HTTPIntegrationTests(unittest.TestCase):
         database.initialize()
         self.database = database
         service = LogService(database, EventBroker())
-        settings = Settings(database_path=database.path, ingest_token="secret")
+        settings = Settings(
+            database_path=database.path,
+            ingest_token="secret",
+            max_streams_per_client=2,
+        )
         self.server = LogHTTPServer(("127.0.0.1", 0), service, settings)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -138,6 +142,7 @@ class HTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.server.ip_enricher.calls), 1)
 
     def test_live_streams_are_limited_per_client(self):
+        self.assertEqual(Settings().max_streams_per_client, 20)
         streams = []
         try:
             for _ in range(2):

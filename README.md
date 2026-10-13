@@ -44,6 +44,7 @@ Configuration can be supplied through environment variables:
 | `LOGSERVER_MAX_SYSLOG_BYTES` | `262144` | Maximum framed CEF event size |
 | `LOGSERVER_INGEST_TOKEN` | unset | Optional HTTP write token |
 | `LOGSERVER_MAX_BODY_BYTES` | `1048576` | Maximum HTTP request size |
+| `LOGSERVER_MAX_STREAMS_PER_CLIENT` | `20` | Maximum simultaneous live-log tabs from one client address |
 | `LOGSERVER_TIMEZONE` | `UTC` | IANA timezone used for human-readable alert `{time}` values |
 
 Equivalent command-line options are shown by `python3 -m logserver --help`.
