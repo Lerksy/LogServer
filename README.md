@@ -44,6 +44,7 @@ Configuration can be supplied through environment variables:
 | `LOGSERVER_MAX_SYSLOG_BYTES` | `262144` | Maximum framed CEF event size |
 | `LOGSERVER_INGEST_TOKEN` | unset | Optional HTTP write token |
 | `LOGSERVER_MAX_BODY_BYTES` | `1048576` | Maximum HTTP request size |
+| `LOGSERVER_TIMEZONE` | `UTC` | IANA timezone used for human-readable alert `{time}` values |
 
 Equivalent command-line options are shown by `python3 -m logserver --help`.
 Use `--no-udp`, `--no-tcp`, or `--no-tls` to disable individual listeners.
@@ -69,7 +70,9 @@ Compose enables all three RouterOS transports. On its first start, it generates
 a self-signed TLS certificate in `/data/tls`; the certificate and private key
 persist in the external data volume. Custom certificate paths can instead be
 provided through `LOGSERVER_TLS_CERTFILE` and `LOGSERVER_TLS_KEYFILE` and mounted
-into the container.
+into the container. Compose defaults `LOGSERVER_TIMEZONE` to `Europe/Kyiv` so
+Telegram `{time}` values use local time and follow daylight-saving transitions;
+set the environment variable before deployment to select another IANA timezone.
 
 #### Updating and deploying source changes
 

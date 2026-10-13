@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .database import LogDatabase
 from .ipintel import IPEnricher, IPInfo, IP_PROVIDERS, IP_TEMPLATE_FIELDS, TWOIP_LANGUAGES
@@ -656,6 +657,7 @@ class AlertDispatcher:
         sender: Callable[[TelegramSettings, str, str], None] | None = None,
         enricher: Callable[[str, str, str], IPInfo] | None = None,
         retry_delays: tuple[float, ...] = DELIVERY_RETRY_DELAYS,
+        timezone_name: str = "UTC",
     ):
         self.database = database
         self.repository = repository
@@ -669,6 +671,10 @@ class AlertDispatcher:
         self._thread: threading.Thread | None = None
         self._pending: dict[int, _PendingBatch] = {}
         self._retry_delays = retry_delays
+        try:
+            self._timezone = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown LOGSERVER_TIMEZONE: {timezone_name}") from exc
 
     def start(self) -> None:
         if self._thread is not None:
@@ -877,10 +883,10 @@ class AlertDispatcher:
             return False
         return datetime.now(timezone.utc) < last_sent + timedelta(seconds=rule.cooldown_seconds)
 
-    @staticmethod
-    def _context(record: LogRecord, rule: AlertRule) -> dict[str, Any] | None:
+    def _context(self, record: LogRecord, rule: AlertRule) -> dict[str, Any] | None:
         context: dict[str, Any] = {
-            "id": record.id, "time": _format_alert_time(record.event_at or record.received_at),
+            "id": record.id,
+            "time": _format_alert_time(record.event_at or record.received_at, self._timezone),
             "received_at": record.received_at, "event_at": record.event_at or "",
             "source": record.source, "facility": record.facility or "", "severity": record.severity,
             "topics": ",".join(record.topics), "message": record.message, "raw": record.raw or "",
@@ -904,11 +910,14 @@ def _escape_template_value(value: str, parse_mode: str) -> str:
     return value
 
 
-def _format_alert_time(value: str) -> str:
+def _format_alert_time(value: str, target_timezone: ZoneInfo) -> str:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(target_timezone)
     return (
         f"{parsed.day:02d} {MONTH_NAMES[parsed.month - 1]} {parsed.year}"
         f" · {parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}"

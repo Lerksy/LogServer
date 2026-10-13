@@ -47,6 +47,7 @@ class Settings:
     max_syslog_bytes: int = 262_144
     ingest_token: str | None = None
     max_body_bytes: int = 1_048_576
+    timezone: str = "UTC"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,5 +65,6 @@ class Settings:
             max_syslog_bytes=_int_env("LOGSERVER_MAX_SYSLOG_BYTES", 262_144),
             ingest_token=os.getenv("LOGSERVER_INGEST_TOKEN") or None,
             max_body_bytes=_int_env("LOGSERVER_MAX_BODY_BYTES", 1_048_576),
+            timezone=os.getenv("LOGSERVER_TIMEZONE", "UTC"),
         )
 

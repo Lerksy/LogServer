@@ -608,6 +608,45 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(self.sent[0][1], "21 Sep 2026 · 01:02:03")
         self.assertRegex(self.sent[1][1], r"^\d{2} [A-Z][a-z]{2} \d{4} · \d{2}:\d{2}:\d{2}$")
 
+    def test_time_uses_configured_timezone_and_daylight_saving(self):
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=lambda settings, text, mode: self.sent.append((settings, text, mode)),
+            timezone_name="Europe/Kyiv",
+        )
+        self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            template="{time}",
+        )))
+        summer = self.database.insert(LogInput(
+            message="drop src=192.0.2.1",
+            source="router",
+            severity="error",
+            event_at="2026-09-21T01:02:03.000Z",
+        ))
+        winter = self.database.insert(LogInput(
+            message="drop src=192.0.2.2",
+            source="router",
+            severity="error",
+            event_at="2026-12-21T01:02:03.000Z",
+        ))
+
+        dispatcher.process(summer)
+        dispatcher.process(winter)
+
+        self.assertEqual(self.sent[0][1], "21 Sep 2026 · 04:02:03")
+        self.assertEqual(self.sent[1][1], "21 Dec 2026 · 03:02:03")
+
+    def test_unknown_alert_timezone_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unknown LOGSERVER_TIMEZONE"):
+            AlertDispatcher(
+                self.database,
+                self.repository,
+                sender=lambda settings, text, mode: None,
+                timezone_name="Mars/Olympus",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

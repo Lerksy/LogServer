@@ -46,7 +46,7 @@ def run(
     database = LogDatabase(settings.database_path)
     database.initialize()
     alert_repository = AlertRepository(settings.database_path)
-    alerts = AlertDispatcher(database, alert_repository)
+    alerts = AlertDispatcher(database, alert_repository, timezone_name=settings.timezone)
     alerts.start()
     service = LogService(database, EventBroker(), alerts)
     http_server = LogHTTPServer((settings.http_host, settings.http_port), service, settings)
