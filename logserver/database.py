@@ -93,6 +93,20 @@ class LogDatabase:
                 CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_rule
                     ON alert_delivery_outbox(rule_id);
 
+                CREATE TABLE IF NOT EXISTS alert_delivery_recipients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    delivery_id INTEGER NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    last_error TEXT,
+                    UNIQUE(delivery_id, chat_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_alert_delivery_recipients_delivery
+                    ON alert_delivery_recipients(delivery_id);
+                CREATE INDEX IF NOT EXISTS idx_alert_delivery_recipients_chat_queue
+                    ON alert_delivery_recipients(chat_id, delivery_id);
+
                 CREATE TABLE IF NOT EXISTS ip_lookup_cache (
                     ip TEXT PRIMARY KEY,
                     country TEXT NOT NULL DEFAULT '',
@@ -152,6 +166,7 @@ class LogDatabase:
                 connection.execute(
                     "ALTER TABLE alert_rules ADD COLUMN additional_chat_ids TEXT NOT NULL DEFAULT '[]'"
                 )
+            self._migrate_delivery_recipients(connection)
             connection.execute(
                 """
                 INSERT OR IGNORE INTO ip_intel_cache (
@@ -181,6 +196,40 @@ class LogDatabase:
                 WHERE provider = '2ip'
                 """
             )
+
+    @staticmethod
+    def _migrate_delivery_recipients(connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            """
+            SELECT delivery.id, delivery.pending_chat_ids, delivery.attempts,
+                   delivery.next_attempt_at, delivery.last_error
+            FROM alert_delivery_outbox AS delivery
+            WHERE NOT EXISTS (
+                SELECT 1 FROM alert_delivery_recipients AS recipient
+                WHERE recipient.delivery_id = delivery.id
+            )
+            ORDER BY delivery.id
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                chat_ids = tuple(dict.fromkeys(json.loads(row["pending_chat_ids"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                chat_ids = ()
+            for chat_id in chat_ids:
+                if not isinstance(chat_id, str) or not chat_id:
+                    continue
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO alert_delivery_recipients (
+                        delivery_id, chat_id, attempts, next_attempt_at, last_error
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["id"], chat_id, row["attempts"],
+                        row["next_attempt_at"], row["last_error"],
+                    ),
+                )
 
     def insert(self, item: LogInput) -> LogRecord:
         return self.insert_many([item])[0]

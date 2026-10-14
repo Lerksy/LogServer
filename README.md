@@ -257,10 +257,12 @@ once. The bot must already have permission to post in every listed chat. A
 failure for one destination does not prevent attempts to the remaining chats,
 and the rule reports which destination failed. Failed deliveries are stored in
 SQLite before they are sent, so retry state survives a service or container
-restart. Only failed destinations are retried, after 5 seconds, 15 seconds,
-1 minute, 5 minutes, 15 minutes, 1 hour, 6 hours, and 24 hours. After the
-initial attempt and all eight retries fail, the delivery is discarded and the
-final error remains visible on the rule.
+restart. Each chat has its own FIFO queue: a newer message cannot overtake an
+older failed message in the same chat, while a failing copy destination does
+not block delivery to healthy chats. Only failed destinations are retried,
+after 5 seconds, 15 seconds, 1 minute, 5 minutes, 15 minutes, 1 hour, 6 hours,
+and then every 24 hours until delivery succeeds. Adding another message for a
+chat immediately retries its queue head and restarts that retry timer.
 
 For example, regex `src=(?P<src_ip>\d+\.\d+\.\d+\.\d+)` exposes `{src_ip}`
 to the template. Numbered captures are available as `{group1}`, `{group2}`, and

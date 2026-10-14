@@ -105,12 +105,13 @@ class AlertRule:
 
 
 @dataclass(frozen=True, slots=True)
-class AlertDelivery:
-    id: int
+class AlertDeliveryRecipient:
+    recipient_id: int
+    delivery_id: int
     rule_id: int
     text: str
     parse_mode: str
-    pending_chat_ids: tuple[str, ...]
+    chat_id: str
     attempts: int
     next_attempt_at: str
     created_at: str
@@ -249,6 +250,15 @@ class AlertRepository:
 
     def delete_rule(self, rule_id: int) -> bool:
         with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                DELETE FROM alert_delivery_recipients
+                WHERE delivery_id IN (
+                    SELECT id FROM alert_delivery_outbox WHERE rule_id = ?
+                )
+                """,
+                (rule_id,),
+            )
             connection.execute("DELETE FROM alert_delivery_outbox WHERE rule_id = ?", (rule_id,))
             cursor = connection.execute("DELETE FROM alert_rules WHERE id = ?", (rule_id,))
         return bool(cursor.rowcount)
@@ -259,7 +269,7 @@ class AlertRepository:
         text: str,
         parse_mode: str,
         chat_ids: tuple[str, ...],
-    ) -> AlertDelivery:
+    ) -> int:
         now = utc_now()
         with closing(self._connect()) as connection, connection:
             cursor = connection.execute(
@@ -271,31 +281,51 @@ class AlertRepository:
                 """,
                 (rule_id, text, parse_mode, json.dumps(chat_ids), now, now),
             )
-            row = connection.execute(
-                "SELECT * FROM alert_delivery_outbox WHERE id = ?",
-                (cursor.lastrowid,),
-            ).fetchone()
-        assert row is not None
-        return self._delivery(row)
+            delivery_id = int(cursor.lastrowid)
+            connection.executemany(
+                """
+                INSERT INTO alert_delivery_recipients (
+                    delivery_id, chat_id, attempts, next_attempt_at
+                ) VALUES (?, ?, 0, ?)
+                """,
+                ((delivery_id, chat_id, now) for chat_id in chat_ids),
+            )
+        return delivery_id
 
-    def list_due_deliveries(self, *, limit: int = 100) -> list[AlertDelivery]:
+    def list_delivery_queue_heads(self) -> list[AlertDeliveryRecipient]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM alert_delivery_outbox
-                WHERE next_attempt_at <= ?
-                ORDER BY next_attempt_at, id
-                LIMIT ?
+                SELECT
+                    recipient.id AS recipient_id,
+                    recipient.delivery_id,
+                    delivery.rule_id,
+                    delivery.text,
+                    delivery.parse_mode,
+                    recipient.chat_id,
+                    recipient.attempts,
+                    recipient.next_attempt_at,
+                    delivery.created_at,
+                    recipient.last_error
+                FROM alert_delivery_recipients AS recipient
+                JOIN alert_delivery_outbox AS delivery
+                  ON delivery.id = recipient.delivery_id
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM alert_delivery_recipients AS earlier
+                    WHERE earlier.chat_id = recipient.chat_id
+                      AND earlier.delivery_id < recipient.delivery_id
+                )
+                ORDER BY recipient.delivery_id, recipient.id
                 """,
-                (utc_now(), limit),
             ).fetchall()
-        return [self._delivery(row) for row in rows]
+        return [self._delivery_recipient(row) for row in rows]
 
-    def reschedule_delivery(
+    def reschedule_recipient(
         self,
+        recipient_id: int,
         delivery_id: int,
         rule_id: int,
-        pending_chat_ids: tuple[str, ...],
         attempts: int,
         next_attempt_at: str,
         error: str,
@@ -304,48 +334,94 @@ class AlertRepository:
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
+                UPDATE alert_delivery_recipients
+                SET attempts = ?, next_attempt_at = ?, last_error = ?
+                WHERE id = ?
+                """,
+                (attempts, next_attempt_at, error, recipient_id),
+            )
+            self._sync_delivery(connection, delivery_id, rule_id)
+
+    def complete_recipient(self, recipient_id: int, delivery_id: int, rule_id: int) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "DELETE FROM alert_delivery_recipients WHERE id = ?",
+                (recipient_id,),
+            )
+            self._sync_delivery(connection, delivery_id, rule_id)
+
+    @staticmethod
+    def _sync_delivery(
+        connection: sqlite3.Connection,
+        delivery_id: int,
+        rule_id: int,
+    ) -> None:
+        parent = connection.execute(
+            "SELECT last_error FROM alert_delivery_outbox WHERE id = ?",
+            (delivery_id,),
+        ).fetchone()
+        if parent is None:
+            return
+        recipients = connection.execute(
+            """
+            SELECT chat_id, attempts, next_attempt_at, last_error
+            FROM alert_delivery_recipients
+            WHERE delivery_id = ?
+            ORDER BY id
+            """,
+            (delivery_id,),
+        ).fetchall()
+        if recipients:
+            errors: list[str] = []
+            for recipient in recipients:
+                if recipient["last_error"] and recipient["last_error"] not in errors:
+                    errors.append(recipient["last_error"])
+            error = "; ".join(errors)[:1000] or None
+            connection.execute(
+                """
                 UPDATE alert_delivery_outbox
                 SET pending_chat_ids = ?, attempts = ?, next_attempt_at = ?, last_error = ?
                 WHERE id = ?
                 """,
-                (json.dumps(pending_chat_ids), attempts, next_attempt_at, error, delivery_id),
+                (
+                    json.dumps([recipient["chat_id"] for recipient in recipients]),
+                    max(recipient["attempts"] for recipient in recipients),
+                    min(recipient["next_attempt_at"] for recipient in recipients),
+                    error,
+                    delivery_id,
+                ),
             )
+            pending_error = connection.execute(
+                """
+                SELECT last_error FROM alert_delivery_outbox
+                WHERE rule_id = ? AND last_error IS NOT NULL
+                ORDER BY id LIMIT 1
+                """,
+                (rule_id,),
+            ).fetchone()
             connection.execute(
                 "UPDATE alert_rules SET last_error = ? WHERE id = ?",
-                (error, rule_id),
+                (pending_error["last_error"] if pending_error else None, rule_id),
             )
+            return
 
-    def complete_delivery(self, delivery_id: int, rule_id: int) -> None:
-        with closing(self._connect()) as connection, connection:
-            cursor = connection.execute(
-                "DELETE FROM alert_delivery_outbox WHERE id = ?",
-                (delivery_id,),
-            )
-            if cursor.rowcount:
-                pending = connection.execute(
-                    """
-                    SELECT last_error FROM alert_delivery_outbox
-                    WHERE rule_id = ? ORDER BY next_attempt_at, id LIMIT 1
-                    """,
-                    (rule_id,),
-                ).fetchone()
-                connection.execute(
-                    """
-                    UPDATE alert_rules
-                    SET last_sent_at = ?, last_error = ?, sent_count = sent_count + 1
-                    WHERE id = ?
-                    """,
-                    (utc_now(), pending["last_error"] if pending else None, rule_id),
-                )
-
-    def discard_delivery(self, delivery_id: int, rule_id: int, error: str) -> None:
-        error = error[:1000]
-        with closing(self._connect()) as connection, connection:
-            connection.execute("DELETE FROM alert_delivery_outbox WHERE id = ?", (delivery_id,))
-            connection.execute(
-                "UPDATE alert_rules SET last_error = ? WHERE id = ?",
-                (error, rule_id),
-            )
+        connection.execute("DELETE FROM alert_delivery_outbox WHERE id = ?", (delivery_id,))
+        pending = connection.execute(
+            """
+            SELECT last_error FROM alert_delivery_outbox
+            WHERE rule_id = ? AND last_error IS NOT NULL
+            ORDER BY id LIMIT 1
+            """,
+            (rule_id,),
+        ).fetchone()
+        connection.execute(
+            """
+            UPDATE alert_rules
+            SET last_sent_at = ?, last_error = ?, sent_count = sent_count + 1
+            WHERE id = ?
+            """,
+            (utc_now(), pending["last_error"] if pending else None, rule_id),
+        )
 
     def pending_delivery_count(self, rule_id: int | None = None) -> int:
         sql = "SELECT COUNT(*) FROM alert_delivery_outbox"
@@ -387,13 +463,14 @@ class AlertRepository:
         )
 
     @staticmethod
-    def _delivery(row: sqlite3.Row) -> AlertDelivery:
-        return AlertDelivery(
-            id=row["id"],
+    def _delivery_recipient(row: sqlite3.Row) -> AlertDeliveryRecipient:
+        return AlertDeliveryRecipient(
+            recipient_id=row["recipient_id"],
+            delivery_id=row["delivery_id"],
             rule_id=row["rule_id"],
             text=row["text"],
             parse_mode=row["parse_mode"],
-            pending_chat_ids=tuple(json.loads(row["pending_chat_ids"])),
+            chat_id=row["chat_id"],
             attempts=row["attempts"],
             next_attempt_at=row["next_attempt_at"],
             created_at=row["created_at"],
@@ -671,6 +748,8 @@ class AlertDispatcher:
         self._thread: threading.Thread | None = None
         self._pending: dict[int, _PendingBatch] = {}
         self._retry_delays = retry_delays
+        if not retry_delays or any(delay < 0 for delay in retry_delays):
+            raise ValueError("retry_delays must contain at least one non-negative delay")
         try:
             self._timezone = ZoneInfo(timezone_name)
         except ZoneInfoNotFoundError as exc:
@@ -792,48 +871,63 @@ class AlertDispatcher:
         if not destinations:
             self.repository.record_error(rule.id, "No Telegram chat ID is configured")
             return
-        delivery = self.repository.create_delivery(rule.id, text, rule.parse_mode, destinations)
-        self._deliver(delivery)
+        self.repository.create_delivery(rule.id, text, rule.parse_mode, destinations)
+        self._drain_outbox(force_chat_ids=destinations)
 
     def _retry_due(self) -> None:
-        for delivery in self.repository.list_due_deliveries():
-            self._deliver(delivery)
+        self._drain_outbox()
 
-    def _deliver(self, delivery: AlertDelivery) -> None:
+    def _drain_outbox(self, *, force_chat_ids: tuple[str, ...] = ()) -> None:
+        forced = set(force_chat_ids)
+        blocked: set[str] = set()
+        while True:
+            now = utc_now()
+            queue_heads = [
+                delivery
+                for delivery in self.repository.list_delivery_queue_heads()
+                if delivery.chat_id not in blocked
+                and (delivery.chat_id in forced or delivery.next_attempt_at <= now)
+            ]
+            if not queue_heads:
+                return
+            advanced = False
+            for delivery in queue_heads:
+                if self._deliver_recipient(delivery):
+                    advanced = True
+                else:
+                    blocked.add(delivery.chat_id)
+            if not advanced:
+                return
+
+    def _deliver_recipient(self, delivery: AlertDeliveryRecipient) -> bool:
         settings = self.repository.get_telegram_settings()
-        errors: list[str] = []
-        failed_chat_ids: list[str] = []
-        for chat_id in delivery.pending_chat_ids:
-            recipient = TelegramSettings(settings.bot_token, chat_id, settings.updated_at)
-            try:
-                self.sender(recipient, delivery.text, delivery.parse_mode)
-            except Exception as exc:
-                failed_chat_ids.append(chat_id)
-                errors.append(f"{chat_id}: {exc}")
-        if not errors:
-            self.repository.complete_delivery(delivery.id, delivery.rule_id)
-            return
+        recipient = TelegramSettings(settings.bot_token, delivery.chat_id, settings.updated_at)
+        try:
+            self.sender(recipient, delivery.text, delivery.parse_mode)
+        except Exception as exc:
+            detail = f"{delivery.chat_id}: {exc}"
+        else:
+            self.repository.complete_recipient(
+                delivery.recipient_id,
+                delivery.delivery_id,
+                delivery.rule_id,
+            )
+            return True
 
         attempts = delivery.attempts + 1
-        detail = "; ".join(errors)
-        if attempts > len(self._retry_delays):
-            self.repository.discard_delivery(
-                delivery.id,
-                delivery.rule_id,
-                f"Delivery abandoned after {attempts} attempts: {detail}",
-            )
-            return
-        next_attempt = datetime.now(timezone.utc) + timedelta(seconds=self._retry_delays[attempts - 1])
+        retry_delay = self._retry_delays[min(attempts - 1, len(self._retry_delays) - 1)]
+        next_attempt = datetime.now(timezone.utc) + timedelta(seconds=retry_delay)
         next_attempt_at = next_attempt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        self.repository.reschedule_delivery(
-            delivery.id,
+        self.repository.reschedule_recipient(
+            delivery.recipient_id,
+            delivery.delivery_id,
             delivery.rule_id,
-            tuple(failed_chat_ids),
             attempts,
             next_attempt_at,
-            f"Delivery failed; retry {attempts}/{len(self._retry_delays)} scheduled for "
+            f"Delivery failed; retry {attempts} scheduled for "
             f"{next_attempt_at}: {detail}",
         )
+        return False
 
     @staticmethod
     def _country_allowed(rule: AlertRule, context: dict[str, Any]) -> bool:

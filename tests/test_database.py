@@ -133,6 +133,49 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(service_settings_exist, 1)
         self.assertEqual(delivery_outbox_exists, 1)
 
+    def test_pending_deliveries_are_migrated_to_recipient_queues(self):
+        legacy_path = Path(self.tempdir.name) / "legacy-outbox.db"
+        with closing(sqlite3.connect(legacy_path)) as connection, connection:
+            connection.execute(
+                """
+                CREATE TABLE alert_delivery_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    parse_mode TEXT NOT NULL DEFAULT '',
+                    pending_chat_ids TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_error TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO alert_delivery_outbox (
+                    rule_id, text, pending_chat_ids, attempts,
+                    next_attempt_at, created_at, last_error
+                ) VALUES (1, 'queued', '["-1001", "-1002"]', 3,
+                          '2026-10-14T20:00:00.000Z',
+                          '2026-10-14T19:00:00.000Z', 'network error')
+                """
+            )
+
+        LogDatabase(legacy_path).initialize()
+
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            recipients = connection.execute(
+                """
+                SELECT chat_id, attempts, next_attempt_at, last_error
+                FROM alert_delivery_recipients ORDER BY id
+                """
+            ).fetchall()
+        self.assertEqual([row["chat_id"] for row in recipients], ["-1001", "-1002"])
+        self.assertTrue(all(row["attempts"] == 3 for row in recipients))
+        self.assertTrue(all(row["last_error"] == "network error" for row in recipients))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -452,7 +452,7 @@ class AlertTests(unittest.TestCase):
 
         self.assertEqual(len(first_attempts), 1)
         self.assertEqual(self.repository.pending_delivery_count(rule.id), 1)
-        self.assertIn("retry 1/1 scheduled", self.repository.get_rule(rule.id).last_error)
+        self.assertIn("retry 1 scheduled", self.repository.get_rule(rule.id).last_error)
 
         retried = []
         restarted_dispatcher = AlertDispatcher(
@@ -468,6 +468,32 @@ class AlertTests(unittest.TestCase):
         saved = self.repository.get_rule(rule.id)
         self.assertEqual(saved.sent_count, 1)
         self.assertIsNone(saved.last_error)
+
+    def test_delivery_is_not_abandoned_after_retry_schedule_is_exhausted(self):
+        attempts = []
+
+        def sender(settings, text, mode):
+            attempts.append(text)
+            raise RuntimeError("still offline")
+
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=sender,
+            retry_delays=(0,),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=0)))
+        record = self.database.insert(LogInput(
+            message="drop src=8.8.8.8", source="router", severity="error",
+        ))
+
+        dispatcher.process(record)
+        dispatcher._retry_due()
+        dispatcher._retry_due()
+
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 1)
+        self.assertIn("retry 3 scheduled", self.repository.get_rule(rule.id).last_error)
 
     def test_retry_targets_only_destinations_that_failed(self):
         attempted = []
@@ -500,6 +526,101 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(attempted, ["-1001", "-1002", "-1003", "-1002"])
         self.assertEqual(self.repository.pending_delivery_count(rule.id), 0)
         self.assertEqual(self.repository.get_rule(rule.id).sent_count, 1)
+
+    def test_failed_message_stays_ahead_of_newer_messages_for_the_same_chat(self):
+        attempted = []
+        delivered = []
+        failures_remaining = 2
+
+        def sender(settings, text, mode):
+            nonlocal failures_remaining
+            attempted.append(text)
+            if "192.0.2.1" in text and failures_remaining:
+                failures_remaining -= 1
+                raise RuntimeError("temporary network failure")
+            delivered.append(text)
+
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=sender,
+            retry_delays=(3600, 0, 3600),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=0)))
+        first = self.database.insert(LogInput(
+            message="drop src=192.0.2.1", source="router", severity="error",
+        ))
+        second = self.database.insert(LogInput(
+            message="drop src=192.0.2.2", source="router", severity="error",
+        ))
+
+        dispatcher.process(first)
+        dispatcher.process(second)
+
+        self.assertEqual(len(attempted), 2)
+        self.assertTrue(all("192.0.2.1" in text for text in attempted))
+        self.assertEqual(delivered, [])
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 2)
+
+        dispatcher._retry_due()
+
+        self.assertEqual(len(delivered), 2)
+        self.assertIn("192.0.2.1", delivered[0])
+        self.assertIn("192.0.2.2", delivered[1])
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 0)
+        self.assertEqual(self.repository.get_rule(rule.id).sent_count, 2)
+
+    def test_failed_copy_queue_does_not_block_primary_chat(self):
+        attempted = []
+        delivered = []
+        copy_failures_remaining = 2
+
+        def sender(settings, text, mode):
+            nonlocal copy_failures_remaining
+            attempted.append((settings.chat_id, text))
+            if settings.chat_id == "-1002" and copy_failures_remaining:
+                copy_failures_remaining -= 1
+                raise RuntimeError("copy destination unavailable")
+            delivered.append((settings.chat_id, text))
+
+        dispatcher = AlertDispatcher(
+            self.database,
+            self.repository,
+            sender=sender,
+            retry_delays=(3600, 3600, 3600),
+        )
+        rule = self.repository.create_rule(validate_rule(rule_payload(
+            batch_window_seconds=0,
+            additional_chat_ids=["-1002"],
+        )))
+        first = self.database.insert(LogInput(
+            message="drop src=192.0.2.1", source="router", severity="error",
+        ))
+        second = self.database.insert(LogInput(
+            message="drop src=192.0.2.2", source="router", severity="error",
+        ))
+
+        dispatcher.process(first)
+        dispatcher.process(second)
+
+        primary = [text for chat_id, text in delivered if chat_id == "-1001"]
+        self.assertEqual(len(primary), 2)
+        self.assertIn("192.0.2.1", primary[0])
+        self.assertIn("192.0.2.2", primary[1])
+        copy_attempts = [text for chat_id, text in attempted if chat_id == "-1002"]
+        self.assertEqual(len(copy_attempts), 2)
+        self.assertTrue(all("192.0.2.1" in text for text in copy_attempts))
+        self.assertIn("copy destination unavailable", self.repository.get_rule(rule.id).last_error)
+
+        dispatcher._drain_outbox(force_chat_ids=("-1002",))
+
+        copies = [text for chat_id, text in delivered if chat_id == "-1002"]
+        self.assertEqual(len(copies), 2)
+        self.assertIn("192.0.2.1", copies[0])
+        self.assertIn("192.0.2.2", copies[1])
+        self.assertEqual(self.repository.pending_delivery_count(rule.id), 0)
+        self.assertEqual(self.repository.get_rule(rule.id).sent_count, 2)
+        self.assertIsNone(self.repository.get_rule(rule.id).last_error)
 
     def test_consecutive_matches_are_sent_as_one_batch(self):
         rule = self.repository.create_rule(validate_rule(rule_payload(batch_window_seconds=10)))
